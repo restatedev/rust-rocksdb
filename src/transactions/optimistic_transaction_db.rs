@@ -200,7 +200,7 @@ impl<T: ThreadMode> OptimisticTransactionDB<T> {
             }
 
             for (cf_desc, inner) in cfs_v.iter().zip(cfhandles) {
-                cf_map.insert(cf_desc.name.clone(), inner);
+                cf_map.insert(cf_desc.name.clone().into(), inner);
             }
         }
 

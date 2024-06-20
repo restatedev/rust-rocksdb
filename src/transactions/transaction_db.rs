@@ -322,7 +322,7 @@ impl<T: ThreadMode> TransactionDB<T> {
             }
 
             for (cf_desc, inner) in cfs_v.iter().zip(cfhandles) {
-                cf_map.insert(cf_desc.name.clone(), inner);
+                cf_map.insert(cf_desc.name.clone().into(), inner);
             }
         }
 
@@ -1085,7 +1085,7 @@ impl TransactionDB<SingleThreaded> {
         let inner = self.create_inner_cf_handle(name.as_ref(), opts)?;
         self.cfs
             .cfs
-            .insert(name.as_ref().to_string(), ColumnFamily { inner });
+            .insert(name.as_ref().into(), ColumnFamily { inner });
         Ok(())
     }
 
@@ -1111,7 +1111,7 @@ impl TransactionDB<MultiThreaded> {
         let mut cfs = self.cfs.cfs.write();
         let inner = self.create_inner_cf_handle(name.as_ref(), opts)?;
         cfs.insert(
-            name.as_ref().to_string(),
+            name.as_ref().into(),
             Arc::new(UnboundColumnFamily { inner }),
         );
         Ok(())
