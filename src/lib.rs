@@ -89,6 +89,7 @@ mod db_pinnable_slice;
 mod env;
 mod iter_range;
 pub mod merge_operator;
+pub mod metadata;
 pub mod perf;
 mod prop_name;
 pub mod properties;
@@ -117,10 +118,10 @@ pub use crate::{
         BlockBasedIndexType, BlockBasedOptions, BlockBasedPinningTier, BottommostLevelCompaction,
         Cache, ChecksumType, CompactOptions, CuckooTableOptions, DBCompactionPri,
         DBCompactionStyle, DBCompressionType, DBPath, DBRecoveryMode, DataBlockIndexType,
-        FifoCompactOptions, FlushOptions, IngestExternalFileOptions, KeyEncodingType, LogLevel,
-        MemtableFactory, Options, PlainTableFactoryOptions, RateLimiterMode, ReadOptions, ReadTier,
-        UniversalCompactOptions, UniversalCompactionStopStyle, WaitForCompactOptions,
-        WriteBufferManager, WriteOptions,
+        FifoCompactOptions, FlushOptions, ImportColumnFamilyOptions, IngestExternalFileOptions,
+        KeyEncodingType, LogLevel, MemtableFactory, Options, PlainTableFactoryOptions,
+        RateLimiterMode, ReadOptions, ReadTier, UniversalCompactOptions,
+        UniversalCompactionStopStyle, WaitForCompactOptions, WriteBufferManager, WriteOptions,
     },
     db_pinnable_slice::DBPinnableSlice,
     env::Env,

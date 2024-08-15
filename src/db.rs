@@ -17,9 +17,10 @@ use crate::{
     column_family::AsColumnFamilyRef,
     column_family::BoundColumnFamily,
     column_family::UnboundColumnFamily,
-    db_options::OptionsMustOutliveDB,
+    db_options::{ImportColumnFamilyOptions, OptionsMustOutliveDB},
     ffi,
     ffi_util::{from_cstr, opt_bytes_to_ptr, raw_data, to_cpath, CStrLike},
+    metadata::ExportImportFilesMetaData,
     ColumnFamily, ColumnFamilyDescriptor, CompactOptions, DBIteratorWithThreadMode,
     DBPinnableSlice, DBRawIteratorWithThreadMode, DBWALIterator, Direction, Error, FlushOptions,
     IngestExternalFileOptions, IteratorMode, Options, ReadOptions, SnapshotWithThreadMode,
@@ -830,7 +831,7 @@ impl<T: ThreadMode> DBWithThreadMode<T> {
     }
 
     pub fn write(&self, batch: &WriteBatch) -> Result<(), Error> {
-        self.write_opt(&batch, &WriteOptions::default())
+        self.write_opt(batch, &WriteOptions::default())
     }
 
     pub fn write_without_wal(&self, batch: &WriteBatch) -> Result<(), Error> {
@@ -2289,47 +2290,17 @@ impl<T: ThreadMode, D: DBInner> DBCommon<T, D> {
     /// and end key
     pub fn live_files(&self) -> Result<Vec<LiveFile>, Error> {
         unsafe {
-            let files = ffi::rocksdb_livefiles(self.inner.inner());
-            if files.is_null() {
+            let livefiles_ptr = ffi::rocksdb_livefiles(self.inner.inner());
+            if livefiles_ptr.is_null() {
                 Err(Error::new("Could not get live files".to_owned()))
             } else {
-                let n = ffi::rocksdb_livefiles_count(files);
-
-                let mut livefiles = Vec::with_capacity(n as usize);
-                let mut key_size: usize = 0;
-
-                for i in 0..n {
-                    let column_family_name =
-                        from_cstr(ffi::rocksdb_livefiles_column_family_name(files, i));
-                    let name = from_cstr(ffi::rocksdb_livefiles_name(files, i));
-                    let size = ffi::rocksdb_livefiles_size(files, i);
-                    let level = ffi::rocksdb_livefiles_level(files, i);
-
-                    // get smallest key inside file
-                    let smallest_key = ffi::rocksdb_livefiles_smallestkey(files, i, &mut key_size);
-                    let smallest_key = raw_data(smallest_key, key_size);
-
-                    // get largest key inside file
-                    let largest_key = ffi::rocksdb_livefiles_largestkey(files, i, &mut key_size);
-                    let largest_key = raw_data(largest_key, key_size);
-
-                    livefiles.push(LiveFile {
-                        column_family_name,
-                        name,
-                        size,
-                        level,
-                        start_key: smallest_key,
-                        end_key: largest_key,
-                        num_entries: ffi::rocksdb_livefiles_entries(files, i),
-                        num_deletions: ffi::rocksdb_livefiles_deletions(files, i),
-                    });
-                }
+                let files = LiveFile::from_rocksdb_livefiles_ptr(livefiles_ptr);
 
                 // destroy livefiles metadata(s)
-                ffi::rocksdb_livefiles_destroy(files);
+                ffi::rocksdb_livefiles_destroy(livefiles_ptr);
 
                 // return
-                Ok(livefiles)
+                Ok(files)
             }
         }
     }
@@ -2457,6 +2428,28 @@ impl<I: DBInner> DBCommon<SingleThreaded, I> {
         Ok(())
     }
 
+    pub fn create_column_family_with_import<N: AsRef<str>>(
+        &mut self,
+        options: &Options,
+        name: N,
+        import_options: &ImportColumnFamilyOptions,
+        metadata: &ExportImportFilesMetaData,
+    ) -> Result<(), Error> {
+        let inner = unsafe {
+            ffi_try!(ffi::rocksdb_create_column_family_with_import(
+                self.inner.inner(),
+                options.inner,
+                name.as_ref().as_ptr() as *const c_char,
+                import_options.inner,
+                metadata.inner
+            ))
+        };
+        self.cfs
+            .cfs
+            .insert(name.as_ref().into(), ColumnFamily { inner });
+        Ok(())
+    }
+
     /// Drops the column family with the given name
     pub fn drop_cf(&mut self, name: &str) -> Result<(), Error> {
         if let Some(cf) = self.cfs.cfs.remove(name) {
@@ -2481,6 +2474,29 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
     /// Creates column family with given name and options
     pub fn create_cf<N: AsRef<str>>(&self, name: N, opts: &Options) -> Result<(), Error> {
         let inner = self.create_inner_cf_handle(name.as_ref(), opts)?;
+        self.cfs.cfs.write().insert(
+            name.as_ref().into(),
+            Arc::new(UnboundColumnFamily { inner }),
+        );
+        Ok(())
+    }
+
+    pub fn create_column_family_with_import<N: AsRef<str>>(
+        &mut self,
+        options: &Options,
+        name: N,
+        import_options: &ImportColumnFamilyOptions,
+        metadata: &ExportImportFilesMetaData,
+    ) -> Result<(), Error> {
+        let inner = unsafe {
+            ffi_try!(ffi::rocksdb_create_column_family_with_import(
+                self.inner.inner(),
+                options.inner,
+                name.as_ref().as_ptr() as *const c_char,
+                import_options.inner,
+                metadata.inner
+            ))
+        };
         self.cfs.cfs.write().insert(
             name.as_ref().into(),
             Arc::new(UnboundColumnFamily { inner }),
@@ -2545,6 +2561,9 @@ pub struct LiveFile {
     pub column_family_name: String,
     /// Name of the file
     pub name: String,
+    /// The directory containing the file, without a trailing '/'. This could be
+    /// a DB path, wal_dir, etc.
+    pub directory: String,
     /// Size of the file
     pub size: usize,
     /// Level at which this file resides
@@ -2553,10 +2572,59 @@ pub struct LiveFile {
     pub start_key: Option<Vec<u8>>,
     /// Largest user defined key in the file
     pub end_key: Option<Vec<u8>>,
+    pub smallest_seqno: u64,
+    pub largest_seqno: u64,
     /// Number of entries/alive keys in the file
     pub num_entries: u64,
     /// Number of deletions/tomb key(s) in the file
     pub num_deletions: u64,
+}
+
+impl LiveFile {
+    /// Create a `Vec<LiveFile>` from a `rocksdb_livefiles_t` pointer.
+    pub(crate) fn from_rocksdb_livefiles_ptr(
+        files: *const ffi::rocksdb_livefiles_t,
+    ) -> Vec<LiveFile> {
+        unsafe {
+            let n = ffi::rocksdb_livefiles_count(files);
+
+            let mut livefiles = Vec::with_capacity(n as usize);
+            let mut key_size: usize = 0;
+
+            for i in 0..n {
+                let column_family_name =
+                    from_cstr(ffi::rocksdb_livefiles_column_family_name(files, i));
+                let name = from_cstr(ffi::rocksdb_livefiles_name(files, i));
+                let directory = from_cstr(ffi::rocksdb_livefiles_directory(files, i));
+                let size = ffi::rocksdb_livefiles_size(files, i);
+                let level = ffi::rocksdb_livefiles_level(files, i);
+
+                // get smallest key inside file
+                let smallest_key = ffi::rocksdb_livefiles_smallestkey(files, i, &mut key_size);
+                let smallest_key = raw_data(smallest_key, key_size);
+
+                // get largest key inside file
+                let largest_key = ffi::rocksdb_livefiles_largestkey(files, i, &mut key_size);
+                let largest_key = raw_data(largest_key, key_size);
+
+                livefiles.push(LiveFile {
+                    column_family_name,
+                    name,
+                    directory,
+                    size,
+                    level,
+                    start_key: smallest_key,
+                    end_key: largest_key,
+                    largest_seqno: ffi::rocksdb_livefiles_largest_seqno(files, i),
+                    smallest_seqno: ffi::rocksdb_livefiles_smallest_seqno(files, i),
+                    num_entries: ffi::rocksdb_livefiles_entries(files, i),
+                    num_deletions: ffi::rocksdb_livefiles_deletions(files, i),
+                });
+            }
+
+            livefiles
+        }
+    }
 }
 
 fn convert_options(opts: &[(&str, &str)]) -> Result<Vec<(CString, CString)>, Error> {

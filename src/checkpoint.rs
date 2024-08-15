@@ -17,7 +17,8 @@
 //!
 //! [1]: https://github.com/facebook/rocksdb/wiki/Checkpoints
 
-use crate::{db::DBInner, ffi, ffi_util::to_cpath, DBCommon, Error, ThreadMode};
+use crate::metadata::ExportImportFilesMetaData;
+use crate::{db::DBInner, ffi, ffi_util::to_cpath, AsColumnFamilyRef, DBCommon, Error, ThreadMode};
 use std::{marker::PhantomData, path::Path};
 
 /// Undocumented parameter for `ffi::rocksdb_checkpoint_create` function. Zero by default.
@@ -63,6 +64,25 @@ impl<'db> Checkpoint<'db> {
             ));
         }
         Ok(())
+    }
+
+    /// Exports all live SST files of a specified Column Family onto export_path,
+    /// returning SST files information in metadata.
+    pub fn export_column_family<P: AsRef<Path>>(
+        &self,
+        column_family: &impl AsColumnFamilyRef,
+        export_path: P,
+    ) -> Result<ExportImportFilesMetaData, Error> {
+        let cpath = to_cpath(export_path)?;
+        let column_family_handle = column_family.inner();
+        let metadata = unsafe {
+            ffi_try!(ffi::rocksdb_checkpoint_export_column_family(
+                self.inner,
+                column_family_handle,
+                cpath.as_ptr(),
+            ))
+        };
+        Ok(ExportImportFilesMetaData { inner: metadata })
     }
 }
 

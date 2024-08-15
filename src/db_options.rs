@@ -4738,6 +4738,36 @@ impl Drop for DBPath {
     }
 }
 
+/// Options for importing column families.
+pub struct ImportColumnFamilyOptions {
+    pub(crate) inner: *mut ffi::rocksdb_import_column_family_options_t,
+}
+
+impl ImportColumnFamilyOptions {
+    pub fn new() -> Self {
+        let inner = unsafe { ffi::rocksdb_import_column_family_options_create() };
+        ImportColumnFamilyOptions { inner }
+    }
+
+    pub fn set_move_files(&mut self, v: bool) {
+        unsafe {
+            ffi::rocksdb_import_column_family_options_set_move_files(self.inner, c_uchar::from(v));
+        }
+    }
+}
+
+impl Default for ImportColumnFamilyOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ImportColumnFamilyOptions {
+    fn drop(&mut self) {
+        unsafe { ffi::rocksdb_import_column_family_options_destroy(self.inner) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::db_options::WriteBufferManager;
