@@ -73,6 +73,23 @@ impl<'db> Checkpoint<'db> {
     ///   is in the same partition as the db directory, copied otherwise.
     /// - export_dir should not already exist and will be created by this API.
     /// - Always triggers a flush.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_rocksdb::{DB, checkpoint::Checkpoint};
+    ///
+    /// fn export_column_family(db: &DB, column_family_name: &str, export_path: &str) {
+    ///    let cp = Checkpoint::new(&db).unwrap();
+    ///    let cf = db.cf_handle(column_family_name).unwrap();
+    ///
+    ///    let export_metadata = cp.export_column_family(&cf, export_path).unwrap();
+    ///
+    ///    assert!(export_metadata.get_files().len() > 0);
+    /// }
+    /// ```
+    ///
+    /// See also: [`DB::create_column_family_with_import`].
     pub fn export_column_family<P: AsRef<Path>>(
         &self,
         column_family: &impl AsColumnFamilyRef,

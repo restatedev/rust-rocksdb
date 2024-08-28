@@ -12,4 +12,29 @@ modified on any error, and a best effort is made to remove any newly-created fil
 on a successful return, and will not be present on error. A Column Family may be present if a crash occurs during a
 call.
 
+# Examples
+
+```rust
+use rust_rocksdb::{ExportImportFilesMetaData, ImportColumnFamilyOptions, Options, DB};
+
+fn import_column_family(
+    db: &mut DB,
+    column_family_name: &str,
+    import_metadata: &ExportImportFilesMetaData,
+) {
+    let cf_opts = Options::default();
+
+    let mut import_opts = ImportColumnFamilyOptions::default();
+    import_opts.set_move_files(true);
+
+    db.create_column_family_with_import(
+        &cf_opts,
+        column_family_name,
+        &import_opts,
+        &import_metadata,
+    )
+        .unwrap();
+}
+```
+
 [export_cf]: crate::checkpoint::Checkpoint::export_column_family

@@ -2649,8 +2649,10 @@ impl LiveFile {
     }
 }
 
-/// Metadata returned as output from [`crate::checkpoint::Checkpoint::export_column_family`] and
-/// used as input to [`crate::DB::create_column_family_with_import`].
+/// Metadata returned as output from [`Checkpoint::export_column_family`][export_column_family] and
+/// used as input to [`DB::create_column_family_with_import`].
+///
+/// [export_column_family]: crate::checkpoint::Checkpoint::export_column_family
 #[derive(Debug)]
 pub struct ExportImportFilesMetaData {
     pub(crate) inner: *mut ffi::rocksdb_export_import_files_metadata_t,
