@@ -50,26 +50,34 @@ impl ExportImportFilesMetaData {
                 let c_name = CString::new(file.name.clone()).unwrap();
                 let c_directory = CString::new(file.directory.clone()).unwrap();
 
-                ffi::rocksdb_livefiles_add(
-                    livefiles,
-                    c_cf_name.as_ptr(),
-                    c_name.as_ptr(),
-                    c_directory.as_ptr(),
-                    file.size,
-                    file.level,
+                let live_file = ffi::rocksdb_livefile_create();
+
+                ffi::rocksdb_livefile_set_column_family_name(live_file, c_cf_name.as_ptr());
+                ffi::rocksdb_livefile_set_level(live_file, file.level);
+                ffi::rocksdb_livefile_set_name(live_file, c_name.as_ptr());
+                ffi::rocksdb_livefile_set_directory(live_file, c_directory.as_ptr());
+                ffi::rocksdb_livefile_set_size(live_file, file.size);
+                ffi::rocksdb_livefile_set_smallest_key(
+                    live_file,
                     file.start_key
                         .as_ref()
-                        .map_or(ptr::null(), |k| k.as_ptr() as *const i8),
+                        .map_or(ptr::null(), |k| k.as_ptr() as *const libc::c_char),
                     file.start_key.as_ref().map_or(0, Vec::len),
+                );
+                ffi::rocksdb_livefile_set_largest_key(
+                    live_file,
                     file.end_key
                         .as_ref()
-                        .map_or(ptr::null(), |k| k.as_ptr() as *const i8),
+                        .map_or(ptr::null(), |k| k.as_ptr() as *const libc::c_char),
                     file.end_key.as_ref().map_or(0, Vec::len),
-                    file.smallest_seqno,
-                    file.largest_seqno,
-                    file.num_entries,
-                    file.num_deletions,
                 );
+                ffi::rocksdb_livefile_set_smallest_seqno(live_file, file.smallest_seqno);
+                ffi::rocksdb_livefile_set_largest_seqno(live_file, file.largest_seqno);
+                ffi::rocksdb_livefile_set_num_entries(live_file, file.num_entries);
+                ffi::rocksdb_livefile_set_num_deletions(live_file, file.num_deletions);
+
+                // takes ownership of live_file, no need to destroy it after
+                ffi::rocksdb_livefiles_add(livefiles, live_file);
             }
 
             ffi::rocksdb_export_import_files_metadata_set_files(self.inner, livefiles);
