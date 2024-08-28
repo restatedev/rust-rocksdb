@@ -10,6 +10,9 @@ pub struct ExportImportFilesMetaData {
     pub(crate) inner: *mut ffi::rocksdb_export_import_files_metadata_t,
 }
 
+unsafe impl Send for ExportImportFilesMetaData {}
+unsafe impl Sync for ExportImportFilesMetaData {}
+
 impl ExportImportFilesMetaData {
     pub fn get_db_comparator_name(&self) -> String {
         unsafe {

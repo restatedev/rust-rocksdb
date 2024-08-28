@@ -2503,7 +2503,7 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
     }
 
     pub fn create_column_family_with_import<N: AsRef<str>>(
-        &mut self,
+        &self,
         options: &Options,
         name: N,
         import_options: &ImportColumnFamilyOptions,
