@@ -89,7 +89,6 @@ mod db_pinnable_slice;
 mod env;
 mod iter_range;
 pub mod merge_operator;
-pub mod metadata;
 pub mod perf;
 mod prop_name;
 pub mod properties;
@@ -108,8 +107,8 @@ pub use crate::{
     },
     compaction_filter::Decision as CompactionDecision,
     db::{
-        DBAccess, DBCommon, DBWithThreadMode, LiveFile, MultiThreaded, SingleThreaded, ThreadMode,
-        DB,
+        DBAccess, DBCommon, DBWithThreadMode, ExportImportFilesMetaData, LiveFile, MultiThreaded,
+        SingleThreaded, ThreadMode, DB,
     },
     db_iterator::{
         DBIterator, DBIteratorWithThreadMode, DBRawIterator, DBRawIteratorWithThreadMode,

@@ -399,6 +399,7 @@ unsafe impl Send for IngestExternalFileOptions {}
 unsafe impl Send for CacheWrapper {}
 unsafe impl Send for CompactOptions {}
 unsafe impl Send for WriteBufferManagerWrapper {}
+unsafe impl Send for ImportColumnFamilyOptions {}
 
 // Sync is similarly safe for many types because they do not expose interior mutability, and their
 // use within the rocksdb library is generally behind a const reference
@@ -412,6 +413,7 @@ unsafe impl Sync for IngestExternalFileOptions {}
 unsafe impl Sync for CacheWrapper {}
 unsafe impl Sync for CompactOptions {}
 unsafe impl Sync for WriteBufferManagerWrapper {}
+unsafe impl Sync for ImportColumnFamilyOptions {}
 
 impl Drop for Options {
     fn drop(&mut self) {
@@ -4738,7 +4740,8 @@ impl Drop for DBPath {
     }
 }
 
-/// Options for importing column families.
+/// Options for importing column families. See
+/// [DB::create_column_family_with_import](crate::DB::create_column_family_with_import).
 pub struct ImportColumnFamilyOptions {
     pub(crate) inner: *mut ffi::rocksdb_import_column_family_options_t,
 }
@@ -4749,9 +4752,17 @@ impl ImportColumnFamilyOptions {
         ImportColumnFamilyOptions { inner }
     }
 
-    pub fn set_move_files(&mut self, v: bool) {
+    /// Determines whether to move the provided set of files on import. The default
+    /// behavior is to copy the external files on import. Setting `move_files` to `true`
+    /// will move the files instead of copying them. See
+    /// [DB::create_column_family_with_import](crate::DB::create_column_family_with_import)
+    /// for more information.
+    pub fn set_move_files(&mut self, move_files: bool) {
         unsafe {
-            ffi::rocksdb_import_column_family_options_set_move_files(self.inner, c_uchar::from(v));
+            ffi::rocksdb_import_column_family_options_set_move_files(
+                self.inner,
+                c_uchar::from(move_files),
+            );
         }
     }
 }

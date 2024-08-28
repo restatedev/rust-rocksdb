@@ -17,8 +17,8 @@
 //!
 //! [1]: https://github.com/facebook/rocksdb/wiki/Checkpoints
 
-use crate::metadata::ExportImportFilesMetaData;
-use crate::{db::DBInner, ffi, ffi_util::to_cpath, AsColumnFamilyRef, DBCommon, Error, ThreadMode};
+use crate::db::{DBInner, ExportImportFilesMetaData};
+use crate::{ffi, ffi_util::to_cpath, AsColumnFamilyRef, DBCommon, Error, ThreadMode};
 use std::{marker::PhantomData, path::Path};
 
 /// Undocumented parameter for `ffi::rocksdb_checkpoint_create` function. Zero by default.
@@ -68,6 +68,11 @@ impl<'db> Checkpoint<'db> {
 
     /// Exports all live SST files of a specified Column Family onto export_path,
     /// returning SST files information in metadata.
+    ///
+    /// - SST files will be created as hard links when the directory specified
+    ///   is in the same partition as the db directory, copied otherwise.
+    /// - export_dir should not already exist and will be created by this API.
+    /// - Always triggers a flush.
     pub fn export_column_family<P: AsRef<Path>>(
         &self,
         column_family: &impl AsColumnFamilyRef,
