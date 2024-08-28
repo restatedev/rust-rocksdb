@@ -89,7 +89,7 @@ impl<'db> Checkpoint<'db> {
     /// }
     /// ```
     ///
-    /// See also: [`DB::create_column_family_with_import`].
+    /// See also: [`DB::create_column_family_with_import`](crate::DB::create_column_family_with_import).
     pub fn export_column_family<P: AsRef<Path>>(
         &self,
         column_family: &impl AsColumnFamilyRef,
