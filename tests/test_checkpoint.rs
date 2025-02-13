@@ -19,7 +19,8 @@ use std::path::Path;
 
 use rust_rocksdb::checkpoint::Checkpoint;
 use rust_rocksdb::{
-    ExportImportFilesMetaData, ImportColumnFamilyOptions, IteratorMode, Options, DB,
+    DBWithThreadMode, ExportImportFilesMetaData, ImportColumnFamilyOptions, IteratorMode,
+    MultiThreaded, Options, DB,
 };
 use util::DBPath;
 
@@ -112,7 +113,7 @@ pub fn test_export_checkpoint_column_family() {
 
     let mut opts = Options::default();
     opts.create_if_missing(true);
-    let mut db = DB::open(&opts, &db_path).unwrap();
+    let db = DBWithThreadMode::<MultiThreaded>::open(&opts, &db_path).unwrap();
 
     let opts = Options::default();
     db.create_cf("cf1", &opts).unwrap();
@@ -144,7 +145,7 @@ pub fn test_export_checkpoint_column_family() {
 
     let mut opts = Options::default();
     opts.create_if_missing(true);
-    let mut db_new = DB::open(&opts, &db_path).unwrap();
+    let db_new = DBWithThreadMode::<MultiThreaded>::open(&opts, &db_path).unwrap();
 
     // Prepopulate some data in the destination DB - this should remain intact after import
     {
