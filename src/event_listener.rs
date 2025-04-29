@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::ffi::{CStr, CString};
+use std::marker::PhantomData;
+use std::ptr::NonNull;
 use std::sync::Arc;
 
 use libc::c_void;
@@ -94,8 +97,8 @@ impl EventListenerExt for Options {
                 Some(EventListenerCallback::<T>::on_flush_completed),
             );
 
-            // Takes ownership of the event listener, which will also drop the
-            // EventListenerCallback via the destructor callback
+            // Takes ownership of the event listener; the Rust callback wrapper will be
+            // dropped via the destructor callback
             ffi::rocksdb_options_add_event_listener(self.inner, event_listener_ptr);
         }
     }
@@ -103,7 +106,7 @@ impl EventListenerExt for Options {
 
 /// Flush information
 #[derive(Debug)]
-pub struct FlushJobInfo {
+pub struct FlushJobInfo<'a> {
     /// The name of the column family
     pub cf_name: String,
     /// The path to the newly created file
@@ -114,6 +117,12 @@ pub struct FlushJobInfo {
     pub largest_seqno: u64,
     /// Flush reason
     pub flush_reason: FlushReason,
+
+    // holds a pointer to data borrowed from RocksDB for the duration of the event handler callback;
+    // we are responsible for freeing the wrapper struct
+    table_properties: NonNull<ffi::rocksdb_table_properties_t>,
+
+    _marker: PhantomData<&'a ()>,
 }
 
 /// Flush reason
@@ -135,6 +144,34 @@ pub enum FlushReason {
     ErrorRecoveryRetryFlush = 12,
     WalFull = 13,
     CatchUpAfterErrorRecovery = 14,
+}
+
+impl Drop for FlushJobInfo<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::rocksdb_table_properties_destroy(self.table_properties.as_ptr());
+        }
+    }
+}
+
+impl<'a> FlushJobInfo<'a> {
+    pub fn get_user_collected_property(&self, key: &str) -> Option<String> {
+        unsafe {
+            let key_cstring = CString::new(key).unwrap();
+            let value_ptr = ffi::rocksdb_table_properties_get_user_collected_property(
+                self.table_properties.as_ptr(),
+                key_cstring.as_ptr(),
+            );
+
+            if value_ptr.is_null() {
+                return None;
+            };
+
+            let value_string = CStr::from_ptr(value_ptr).to_str().unwrap().to_owned();
+            ffi::rocksdb_free(value_ptr as *mut c_void);
+            Some(value_string)
+        }
+    }
 }
 
 pub(crate) struct EventListenerCallback<T>
@@ -180,12 +217,19 @@ where
             ffi::rocksdb_flushjobinfo_flushreason(flush_job_info),
         );
 
+        let table_properties = NonNull::new(unsafe {
+            ffi::rocksdb_flushjobinfo_table_properties(flush_job_info).cast_mut()
+        })
+        .unwrap();
+
         let flush_job_info = FlushJobInfo {
             cf_name,
             file_path,
             smallest_seqno,
             largest_seqno,
             flush_reason,
+            table_properties,
+            _marker: PhantomData,
         };
 
         let cb = &mut *(raw_cb as *mut Self);
