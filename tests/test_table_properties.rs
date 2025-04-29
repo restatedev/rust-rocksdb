@@ -30,7 +30,7 @@ fn test_table_properties_collector() {
 
     let mut cf_opts = Options::default();
     cf_opts.add_table_properties_collector_factory(KeyStartsWithACollectorFactory(
-        CString::new("AKeyCounterFactory").unwrap(),
+        c"AKeyCounterFactory".to_owned(),
     ));
 
     let db = DB::open_cf_with_opts(&opts, &path, [("cf", cf_opts)]).unwrap();
@@ -43,7 +43,7 @@ fn test_table_properties_collector() {
     db.flush_cf(&cf).unwrap();
     assert_eq!(1, listener.state.read().flush_count);
     assert_eq!(
-        Some("1".to_owned()),
+        Some(c"1".to_owned()),
         listener.state.read().latest_custom_property_value
     );
 
@@ -53,14 +53,14 @@ fn test_table_properties_collector() {
 
     assert_eq!(1, listener.state.read().flush_count);
     assert_eq!(
-        Some("1".to_owned()),
+        Some(c"1".to_owned()),
         listener.state.read().latest_custom_property_value
     );
 
     db.flush_cf(&cf).unwrap();
     assert_eq!(2, listener.state.read().flush_count);
     assert_eq!(
-        Some("2".to_owned()),
+        Some(c"2".to_owned()),
         listener.state.read().latest_custom_property_value
     );
 
@@ -68,7 +68,7 @@ fn test_table_properties_collector() {
     db.flush_cf(&cf).unwrap();
     assert_eq!(3, listener.state.read().flush_count);
     assert_eq!(
-        Some("0".to_owned()),
+        Some(c"0".to_owned()),
         listener.state.read().latest_custom_property_value
     );
 }
@@ -79,10 +79,7 @@ impl TablePropertiesCollectorFactory for KeyStartsWithACollectorFactory {
     type Collector = KeyStartsWithACollector;
 
     fn create(&mut self, _context: TablePropertiesCollectorContext) -> Self::Collector {
-        KeyStartsWithACollector {
-            name: CString::new("AKeyCounter").unwrap(),
-            count: 0,
-        }
+        KeyStartsWithACollector { count: 0 }
     }
 
     fn name(&self) -> &CStr {
@@ -92,7 +89,6 @@ impl TablePropertiesCollectorFactory for KeyStartsWithACollectorFactory {
 
 #[derive(Debug)]
 struct KeyStartsWithACollector {
-    name: CString,
     count: usize,
 }
 
@@ -113,17 +109,20 @@ impl TablePropertiesCollector for KeyStartsWithACollector {
         true
     }
 
-    fn finish(&mut self, properties: &mut HashMap<String, String>) -> bool {
-        properties.insert("key_count".to_owned(), self.count.to_string());
+    fn finish(&mut self, properties: &mut HashMap<CString, CString>) -> bool {
+        properties.insert(
+            c"key_count".to_owned(),
+            CString::new(format!("{}", self.count)).unwrap(),
+        );
         true
     }
 
-    fn get_readable_properties(&self) -> HashMap<String, String> {
+    fn get_readable_properties(&self) -> HashMap<CString, CString> {
         HashMap::new()
     }
 
     fn name(&self) -> &CStr {
-        &self.name
+        c"AKeyCounter"
     }
 }
 
@@ -134,7 +133,7 @@ struct CustomPropertyListener {
 #[derive(Default)]
 struct ObservedProperties {
     flush_count: u32,
-    latest_custom_property_value: Option<String>,
+    latest_custom_property_value: Option<CString>,
 }
 
 impl EventListener for CustomPropertyListener {

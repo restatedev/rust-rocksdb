@@ -155,7 +155,7 @@ impl Drop for FlushJobInfo<'_> {
 }
 
 impl<'a> FlushJobInfo<'a> {
-    pub fn get_user_collected_property(&self, key: &str) -> Option<String> {
+    pub fn get_user_collected_property(&self, key: &str) -> Option<CString> {
         unsafe {
             let key_cstring = CString::new(key).unwrap();
             let value_ptr = ffi::rocksdb_table_properties_get_user_collected_property(
@@ -167,7 +167,7 @@ impl<'a> FlushJobInfo<'a> {
                 return None;
             };
 
-            let value_string = CStr::from_ptr(value_ptr).to_str().unwrap().to_owned();
+            let value_string = CStr::from_ptr(value_ptr).to_owned();
             ffi::rocksdb_free(value_ptr as *mut c_void);
             Some(value_string)
         }

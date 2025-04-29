@@ -10,7 +10,7 @@ use crate::{ffi, Options};
 
 /// Extension trait for [`Options`] to register table properties collectors
 pub trait TablePropertiesExt {
-    fn add_table_properties_collector_factory<F>(&mut self, factory_fn: F)
+    fn add_table_properties_collector_factory<F>(&mut self, factory: F)
     where
         F: TablePropertiesCollectorFactory + Send + 'static;
 }
@@ -95,12 +95,12 @@ pub trait TablePropertiesCollector {
     ///
     /// When the returned Status is false, the collected properties will not be written to the
     /// file's property block.
-    fn finish(&mut self, properties: &mut HashMap<String, String>) -> bool;
+    fn finish(&mut self, properties: &mut HashMap<CString, CString>) -> bool;
 
     /// Returns human-readable properties used for logging
     ///
     /// It will only be called after finish() has been called.
-    fn get_readable_properties(&self) -> HashMap<String, String>;
+    fn get_readable_properties(&self) -> HashMap<CString, CString>;
 
     /// Name of the collector to use for logging
     fn name(&self) -> &CStr;
@@ -216,8 +216,6 @@ where
         collector.finish(&mut props);
 
         for (key, value) in &props {
-            let key = CString::new(key.as_str()).unwrap();
-            let value = CString::new(value.as_str()).unwrap();
             ffi::rocksdb_user_collected_properties_insert(
                 user_collected_properties,
                 key.as_ptr(),
@@ -236,8 +234,6 @@ where
         let props = collector.get_readable_properties();
 
         for (key, value) in &props {
-            let key = CString::new(key.as_str()).unwrap();
-            let value = CString::new(value.as_str()).unwrap();
             ffi::rocksdb_user_collected_properties_insert(
                 user_collected_properties,
                 key.as_ptr(),
