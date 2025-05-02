@@ -21,7 +21,7 @@ use libc::c_void;
 
 use crate::ffi::rocksdb_flushjobinfo_t;
 use crate::ffi_util::from_cstr;
-use crate::{ffi, Options};
+use crate::{ffi, CStrLike, Options};
 
 /// EventListener defining a set of callbacks from RocksDB
 ///
@@ -155,9 +155,9 @@ impl Drop for FlushJobInfo<'_> {
 }
 
 impl<'a> FlushJobInfo<'a> {
-    pub fn get_user_collected_property(&self, key: &str) -> Option<CString> {
+    pub fn get_user_collected_property(&self, key: impl CStrLike) -> Option<CString> {
         unsafe {
-            let key_cstring = CString::new(key).unwrap();
+            let key_cstring = key.into_c_string().unwrap();
             let value_ptr = ffi::rocksdb_table_properties_get_user_collected_property(
                 self.table_properties.as_ptr(),
                 key_cstring.as_ptr(),
