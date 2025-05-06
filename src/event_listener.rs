@@ -154,7 +154,7 @@ impl Drop for FlushJobInfo<'_> {
     }
 }
 
-impl<'a> FlushJobInfo<'a> {
+impl FlushJobInfo<'_> {
     pub fn get_user_collected_property(&self, key: impl CStrLike) -> Option<CString> {
         unsafe {
             let key_cstring = key.into_c_string().unwrap();
@@ -165,7 +165,7 @@ impl<'a> FlushJobInfo<'a> {
 
             if value_ptr.is_null() {
                 return None;
-            };
+            }
 
             let value_string = CStr::from_ptr(value_ptr).to_owned();
             ffi::rocksdb_free(value_ptr as *mut c_void);

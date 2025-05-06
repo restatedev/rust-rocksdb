@@ -1,7 +1,7 @@
 mod util;
 
-use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::slice;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -75,11 +75,14 @@ fn test_table_properties_collector() {
 
 struct KeyStartsWithACollectorFactory(CString);
 
-impl TablePropertiesCollectorFactory for KeyStartsWithACollectorFactory {
+impl TablePropertiesCollectorFactory<CString, CString> for KeyStartsWithACollectorFactory {
     type Collector = KeyStartsWithACollector;
 
     fn create(&mut self, _context: TablePropertiesCollectorContext) -> Self::Collector {
-        KeyStartsWithACollector { count: 0 }
+        KeyStartsWithACollector {
+            count: 0,
+            props: vec![],
+        }
     }
 
     fn name(&self) -> &CStr {
@@ -90,9 +93,12 @@ impl TablePropertiesCollectorFactory for KeyStartsWithACollectorFactory {
 #[derive(Debug)]
 struct KeyStartsWithACollector {
     count: usize,
+    props: Vec<(CString, CString)>,
 }
 
-impl TablePropertiesCollector for KeyStartsWithACollector {
+impl TablePropertiesCollector<CString, CString> for KeyStartsWithACollector {
+    type PropertyIterator<'a> = slice::Iter<'a, (CString, CString)>;
+
     fn add_user_key(
         &mut self,
         key: &[u8],
@@ -109,16 +115,17 @@ impl TablePropertiesCollector for KeyStartsWithACollector {
         true
     }
 
-    fn finish(&mut self, properties: &mut HashMap<CString, CString>) -> bool {
-        properties.insert(
+    fn finish(&mut self) -> Result<slice::Iter<'_, (CString, CString)>, rust_rocksdb::Error> {
+        self.props.push((
             c"key_count".to_owned(),
-            CString::new(format!("{}", self.count)).unwrap(),
-        );
-        true
+            CString::new(self.count.to_string()).unwrap(),
+        ));
+
+        Ok(self.props.iter())
     }
 
-    fn get_readable_properties(&self) -> HashMap<CString, CString> {
-        HashMap::new()
+    fn get_readable_properties(&self) -> slice::Iter<'_, (CString, CString)> {
+        self.props.iter()
     }
 
     fn name(&self) -> &CStr {
