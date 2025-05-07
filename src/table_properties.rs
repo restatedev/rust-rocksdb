@@ -1,4 +1,4 @@
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::marker::PhantomData;
 use std::mem;
 use std::slice;
@@ -9,19 +9,15 @@ use crate::{ffi, Options};
 
 /// Extension trait for [`Options`] to register table properties collectors
 pub trait TablePropertiesExt {
-    fn add_table_properties_collector_factory<F, K, V>(&mut self, factory: F)
+    fn add_table_properties_collector_factory<F>(&mut self, factory: F)
     where
-        F: TablePropertiesCollectorFactory<K, V> + Send + 'static,
-        K: AsRef<CStr>,
-        V: AsRef<CStr>;
+        F: TablePropertiesCollectorFactory + Send + 'static;
 }
 
 impl TablePropertiesExt for Options {
-    fn add_table_properties_collector_factory<F, K, V>(&mut self, factory: F)
+    fn add_table_properties_collector_factory<F>(&mut self, factory: F)
     where
-        F: TablePropertiesCollectorFactory<K, V> + Send + 'static,
-        K: AsRef<CStr>,
-        V: AsRef<CStr>,
+        F: TablePropertiesCollectorFactory + Send + 'static,
     {
         unsafe {
             let factory_ptr = Box::into_raw(Box::new(factory)) as *mut c_void;
@@ -31,9 +27,9 @@ impl TablePropertiesExt for Options {
             ffi::rocksdb_options_add_table_properties_collector_factory(
                 self.inner,
                 factory_ptr,
-                Some(TablePropertiesCollectorFactoryCallback::<F, K, V>::destructor),
-                Some(TablePropertiesCollectorFactoryCallback::<F, K, V>::name),
-                Some(TablePropertiesCollectorFactoryCallback::<F, K, V>::create_collector),
+                Some(TablePropertiesCollectorFactoryCallback::<F>::destructor),
+                Some(TablePropertiesCollectorFactoryCallback::<F>::name),
+                Some(TablePropertiesCollectorFactoryCallback::<F>::create_collector),
             );
         }
     }
@@ -61,12 +57,8 @@ pub struct TablePropertiesCollectorContext {
 }
 
 /// Table properties collector factory trait
-pub trait TablePropertiesCollectorFactory<K, V>
-where
-    K: AsRef<CStr>,
-    V: AsRef<CStr>,
-{
-    type Collector: TablePropertiesCollector<K, V>;
+pub trait TablePropertiesCollectorFactory {
+    type Collector: TablePropertiesCollector;
 
     /// Create a new table properties collector
     fn create(&mut self, context: TablePropertiesCollectorContext) -> Self::Collector;
@@ -76,20 +68,8 @@ where
 }
 
 /// Table properties collector trait
-pub trait TablePropertiesCollector<K, V>
-where
-    K: AsRef<CStr>,
-    V: AsRef<CStr>,
-{
-    type PropertyIterator<'a>: IntoIterator<Item = &'a (K, V)>
-    where
-        Self: 'a,
-        K: 'a,
-        V: 'a;
-
+pub trait TablePropertiesCollector {
     /// Called when a new key/value pair is added to the table
-    ///
-    /// Return `true` when on success; returning `false` logs an error.
     fn add_user_key(
         &mut self,
         key: &[u8],
@@ -97,7 +77,7 @@ where
         entry_type: EntryType,
         seq: u64,
         file_size: u64,
-    ) -> bool;
+    ) -> Result<(), crate::Error>;
 
     /// Called after each new block is cut
     fn block_add(
@@ -112,31 +92,27 @@ where
     ///
     /// When the result is `Err`, the collected properties will not be written to the file's
     /// property block.
-    fn finish(&mut self) -> Result<Self::PropertyIterator<'_>, crate::Error>;
+    fn finish(&mut self) -> Result<impl IntoIterator<Item = &(CString, CString)>, crate::Error>;
 
     /// Returns human-readable properties used for logging
     ///
     /// This method will be called after finish() has been called.
-    fn get_readable_properties(&self) -> Self::PropertyIterator<'_>;
+    fn get_readable_properties(&self) -> impl IntoIterator<Item = &(CString, CString)>;
 
     /// Name of the collector to use for logging
     fn name(&self) -> &CStr;
 }
 
-struct TablePropertiesCollectorFactoryCallback<F, K, V>
+struct TablePropertiesCollectorFactoryCallback<F>
 where
-    F: TablePropertiesCollectorFactory<K, V> + Send + 'static,
-    K: AsRef<CStr>,
-    V: AsRef<CStr>,
+    F: TablePropertiesCollectorFactory + Send + 'static,
 {
-    _phantom: PhantomData<(F, K, V)>,
+    _phantom: PhantomData<F>,
 }
 
-impl<F, K, V> TablePropertiesCollectorFactoryCallback<F, K, V>
+impl<F> TablePropertiesCollectorFactoryCallback<F>
 where
-    F: TablePropertiesCollectorFactory<K, V> + Send + 'static,
-    K: AsRef<CStr>,
-    V: AsRef<CStr>,
+    F: TablePropertiesCollectorFactory + Send + 'static,
 {
     unsafe extern "C" fn create_collector(
         raw_self: *mut c_void,
@@ -155,12 +131,12 @@ where
 
         ffi::rocksdb_table_properties_collector_create(
             Box::into_raw(collector).cast(),
-            Some(TablePropertiesCollectorCallback::<F::Collector, K, V>::destructor),
-            Some(TablePropertiesCollectorCallback::<F::Collector, K, V>::add_user_key),
-            Some(TablePropertiesCollectorCallback::<F::Collector, K, V>::block_add),
-            Some(TablePropertiesCollectorCallback::<F::Collector, K, V>::finish),
-            Some(TablePropertiesCollectorCallback::<F::Collector, K, V>::get_readable_properties),
-            Some(TablePropertiesCollectorCallback::<F::Collector, K, V>::name),
+            Some(TablePropertiesCollectorCallback::<F::Collector>::destructor),
+            Some(TablePropertiesCollectorCallback::<F::Collector>::add_user_key),
+            Some(TablePropertiesCollectorCallback::<F::Collector>::block_add),
+            Some(TablePropertiesCollectorCallback::<F::Collector>::finish),
+            Some(TablePropertiesCollectorCallback::<F::Collector>::get_readable_properties),
+            Some(TablePropertiesCollectorCallback::<F::Collector>::name),
         )
     }
 
@@ -174,20 +150,16 @@ where
     }
 }
 
-struct TablePropertiesCollectorCallback<C, K, V>
+struct TablePropertiesCollectorCallback<C>
 where
-    C: TablePropertiesCollector<K, V>,
-    K: AsRef<CStr>,
-    V: AsRef<CStr>,
+    C: TablePropertiesCollector,
 {
-    _marker: PhantomData<(C, K, V)>,
+    _marker: PhantomData<C>,
 }
 
-impl<C, K, V> TablePropertiesCollectorCallback<C, K, V>
+impl<C> TablePropertiesCollectorCallback<C>
 where
-    C: TablePropertiesCollector<K, V>,
-    K: AsRef<CStr>,
-    V: AsRef<CStr>,
+    C: TablePropertiesCollector,
 {
     unsafe extern "C" fn destructor(raw_collector: *mut c_void) {
         drop(Box::from_raw(raw_collector as *mut C));
@@ -214,7 +186,9 @@ where
         let value = slice::from_raw_parts(value_ptr as *const u8, value_len);
         let entry_type = mem::transmute::<c_int, EntryType>(entry_type);
 
-        collector.add_user_key(key, value, entry_type, seq, file_size)
+        collector
+            .add_user_key(key, value, entry_type, seq, file_size)
+            .is_ok()
     }
 
     unsafe extern "C" fn block_add(

@@ -1,7 +1,6 @@
 mod util;
 
 use std::ffi::{CStr, CString};
-use std::slice;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -75,7 +74,7 @@ fn test_table_properties_collector() {
 
 struct KeyStartsWithACollectorFactory(CString);
 
-impl TablePropertiesCollectorFactory<CString, CString> for KeyStartsWithACollectorFactory {
+impl TablePropertiesCollectorFactory for KeyStartsWithACollectorFactory {
     type Collector = KeyStartsWithACollector;
 
     fn create(&mut self, _context: TablePropertiesCollectorContext) -> Self::Collector {
@@ -96,9 +95,7 @@ struct KeyStartsWithACollector {
     props: Vec<(CString, CString)>,
 }
 
-impl TablePropertiesCollector<CString, CString> for KeyStartsWithACollector {
-    type PropertyIterator<'a> = slice::Iter<'a, (CString, CString)>;
-
+impl TablePropertiesCollector for KeyStartsWithACollector {
     fn add_user_key(
         &mut self,
         key: &[u8],
@@ -106,16 +103,18 @@ impl TablePropertiesCollector<CString, CString> for KeyStartsWithACollector {
         entry_type: EntryType,
         _seq: u64,
         _file_size: u64,
-    ) -> bool {
+    ) -> Result<(), rust_rocksdb::Error> {
         if let EntryType::EntryPut = entry_type {
             if key.starts_with(b"a") || key.starts_with(b"A") {
                 self.count += 1;
             }
         }
-        true
+        Ok(())
     }
 
-    fn finish(&mut self) -> Result<slice::Iter<'_, (CString, CString)>, rust_rocksdb::Error> {
+    fn finish(
+        &mut self,
+    ) -> Result<impl IntoIterator<Item = &(CString, CString)>, rust_rocksdb::Error> {
         self.props.push((
             c"key_count".to_owned(),
             CString::new(self.count.to_string()).unwrap(),
@@ -124,7 +123,7 @@ impl TablePropertiesCollector<CString, CString> for KeyStartsWithACollector {
         Ok(self.props.iter())
     }
 
-    fn get_readable_properties(&self) -> slice::Iter<'_, (CString, CString)> {
+    fn get_readable_properties(&self) -> impl IntoIterator<Item = &(CString, CString)> {
         self.props.iter()
     }
 
