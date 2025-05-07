@@ -103,7 +103,7 @@ impl TablePropertiesCollector for KeyStartsWithACollector {
         entry_type: EntryType,
         _seq: u64,
         _file_size: u64,
-    ) -> Result<(), rust_rocksdb::Error> {
+    ) -> Result<(), ()> {
         if let EntryType::EntryPut = entry_type {
             if key.starts_with(b"a") || key.starts_with(b"A") {
                 self.count += 1;
@@ -112,9 +112,7 @@ impl TablePropertiesCollector for KeyStartsWithACollector {
         Ok(())
     }
 
-    fn finish(
-        &mut self,
-    ) -> Result<impl IntoIterator<Item = &(CString, CString)>, rust_rocksdb::Error> {
+    fn finish(&mut self) -> Result<impl IntoIterator<Item = &(CString, CString)>, ()> {
         self.props.push((
             c"key_count".to_owned(),
             CString::new(self.count.to_string()).unwrap(),

@@ -77,7 +77,7 @@ pub trait TablePropertiesCollector {
         entry_type: EntryType,
         seq: u64,
         file_size: u64,
-    ) -> Result<(), crate::Error>;
+    ) -> Result<(), ()>;
 
     /// Called after each new block is cut
     fn block_add(
@@ -92,7 +92,7 @@ pub trait TablePropertiesCollector {
     ///
     /// When the result is `Err`, the collected properties will not be written to the file's
     /// property block.
-    fn finish(&mut self) -> Result<impl IntoIterator<Item = &(CString, CString)>, crate::Error>;
+    fn finish(&mut self) -> Result<impl IntoIterator<Item = &(CString, CString)>, ()>;
 
     /// Returns human-readable properties used for logging
     ///
