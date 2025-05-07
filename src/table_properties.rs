@@ -70,6 +70,9 @@ pub trait TablePropertiesCollectorFactory {
 /// Table properties collector trait
 pub trait TablePropertiesCollector {
     /// Called when a new key/value pair is added to the table
+    ///
+    /// Returning `Err` will cause an error to be logged but otherwise continue building the
+    /// table as normal.
     fn add_user_key(
         &mut self,
         key: &[u8],
@@ -77,7 +80,7 @@ pub trait TablePropertiesCollector {
         entry_type: EntryType,
         seq: u64,
         file_size: u64,
-    ) -> Result<(), ()>;
+    ) -> Result<(), CollectorError>;
 
     /// Called after each new block is cut
     fn block_add(
@@ -92,7 +95,7 @@ pub trait TablePropertiesCollector {
     ///
     /// When the result is `Err`, the collected properties will not be written to the file's
     /// property block.
-    fn finish(&mut self) -> Result<impl IntoIterator<Item = &(CString, CString)>, ()>;
+    fn finish(&mut self) -> Result<impl IntoIterator<Item = &(CString, CString)>, CollectorError>;
 
     /// Returns human-readable properties used for logging
     ///
@@ -101,6 +104,21 @@ pub trait TablePropertiesCollector {
 
     /// Name of the collector to use for logging
     fn name(&self) -> &CStr;
+}
+
+/// Collector error
+///
+/// This error is not meaningfully used by RocksDB, other than to indicate an unsuccessful callback.
+/// It intentionally does not accept a message or other detail as these would be ignored downstream.
+#[derive(Debug, Default)]
+pub struct CollectorError {
+    _private: (),
+}
+
+impl std::fmt::Display for CollectorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Property collector error")
+    }
 }
 
 struct TablePropertiesCollectorFactoryCallback<F>
