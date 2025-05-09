@@ -172,6 +172,32 @@ impl FlushJobInfo<'_> {
             Some(value_string)
         }
     }
+
+    pub fn get_user_collected_property_keys(&self) -> Vec<CString> {
+        unsafe {
+            let mut key_count: usize = 0;
+            let keys_ptr = ffi::rocksdb_table_properties_get_user_collected_property_keys(
+                self.table_properties.as_ptr(),
+                &mut key_count,
+            );
+
+            if keys_ptr.is_null() {
+                return Vec::new();
+            }
+
+            let mut result = Vec::with_capacity(key_count);
+            for i in 0..key_count {
+                let key_ptr = *keys_ptr.add(i);
+                if !key_ptr.is_null() {
+                    result.push(CStr::from_ptr(key_ptr).to_owned());
+                    ffi::rocksdb_free(key_ptr as *mut c_void);
+                }
+            }
+            ffi::rocksdb_free(keys_ptr as *mut c_void);
+
+            result
+        }
+    }
 }
 
 pub(crate) struct EventListenerCallback<T>

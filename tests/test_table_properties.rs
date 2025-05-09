@@ -22,7 +22,7 @@ fn test_table_properties_collector() {
     opts.create_if_missing(true);
     opts.create_missing_column_families(true);
 
-    // Contrary to what the docs say, event listeners are DB-level, and can't be set at the CF level
+    // Event listeners are DB-wide
     let listener = Arc::new(CustomPropertyListener {
         state: RwLock::new(ObservedProperties::default()),
     });
@@ -44,6 +44,7 @@ fn test_table_properties_collector() {
     db.put_cf(&cf, b"a", b"foo").unwrap();
     assert_eq!(0, listener.state.read().flush_count);
     assert_eq!(None, listener.state.read().latest_persisted_key_count);
+    assert_eq!(None, listener.state.read().all_keys);
 
     db.flush_cf(&cf).unwrap();
     assert_eq!(1, listener.state.read().flush_count);
@@ -51,6 +52,8 @@ fn test_table_properties_collector() {
         Some(c"1".to_owned()),
         listener.state.read().latest_persisted_key_count
     );
+    let all_user_keys = listener.state.read().all_keys.clone().unwrap();
+    assert!(all_user_keys.contains(&c"key_count".to_owned()));
 
     db.put_cf(&cf, b"aaa", b"foo").unwrap();
     db.put_cf(&cf, b"bbb", b"bar").unwrap();
@@ -170,6 +173,7 @@ struct CustomPropertyListener {
 struct ObservedProperties {
     flush_count: u32,
     latest_persisted_key_count: Option<CString>,
+    all_keys: Option<Vec<CString>>,
 }
 
 impl EventListener for CustomPropertyListener {
@@ -177,5 +181,6 @@ impl EventListener for CustomPropertyListener {
         let mut guard = self.state.write();
         guard.flush_count += 1;
         guard.latest_persisted_key_count = info.get_user_collected_property("key_count");
+        guard.all_keys = Some(info.get_user_collected_property_keys());
     }
 }
