@@ -172,10 +172,10 @@ impl FlushJobInfo<'_> {
         }
     }
 
-    pub fn get_user_collected_property_keys(&self, prefix: Option<impl CStrLike>) -> Vec<&CStr> {
+    pub fn get_user_collected_property_keys(&self, prefix: impl CStrLike) -> Vec<&CStr> {
         unsafe {
             let mut key_count: usize = 0;
-            let prefix = prefix.map_or_else(|| c"".to_owned(), |p| p.into_c_string().unwrap());
+            let prefix = prefix.into_c_string().unwrap();
             let keys_ptr = ffi::rocksdb_table_properties_get_user_collected_property_keys(
                 self.table_properties.as_ptr(),
                 prefix.as_ptr(),

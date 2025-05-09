@@ -231,7 +231,7 @@ where
 
         let Ok(props) = collector.finish() else {
             // An error will be logged by RocksDB to its own log, though the details will be swallowed.
-            // Property collectors should perform their own logging via other mehanisms if required.
+            // Property collectors should perform their own logging via other mechanisms if required.
             return false;
         };
 

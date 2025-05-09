@@ -184,7 +184,7 @@ impl EventListener for CustomPropertyListener {
             .get_user_collected_property("key_count")
             .map(|cstr| cstr.to_owned());
         guard.all_keys = Some(
-            info.get_user_collected_property_keys(Some(c"key_"))
+            info.get_user_collected_property_keys(c"key_")
                 .iter()
                 .map(|&cstr| cstr.to_owned())
                 .collect(),
