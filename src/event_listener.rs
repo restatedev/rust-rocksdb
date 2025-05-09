@@ -1,6 +1,10 @@
-use crate::ffi_util::error_message;
-use crate::{ffi, Error};
+use std::ffi::CStr;
+use std::ptr::NonNull;
+
 use libc::{c_char, c_void};
+
+use crate::ffi_util::error_message;
+use crate::{ffi, CStrLike, Error};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
@@ -216,6 +220,11 @@ impl From<u32> for DBBackgroundErrorReason {
 
 pub struct FlushJobInfo {
     pub(crate) inner: *const ffi::rocksdb_flushjobinfo_t,
+
+    // Holds a pointer to data borrowed from RocksDB for the duration of the event handler callback;
+    // we are responsible for freeing the wrapper struct. The lifetime of the struct is the same as
+    // the inner flushjobinfo_t instance.
+    table_properties: NonNull<ffi::rocksdb_table_properties_t>,
 }
 
 impl FlushJobInfo {
@@ -255,6 +264,60 @@ impl FlushJobInfo {
 
     pub fn flush_reason(&self) -> DBFlushReason {
         unsafe { DBFlushReason::from(ffi::rocksdb_flushjobinfo_flush_reason(self.inner)) }
+    }
+}
+
+impl FlushJobInfo {
+    pub fn get_user_collected_property(&self, key: impl CStrLike) -> Option<&CStr> {
+        unsafe {
+            let key_cstring = key.into_c_string().unwrap();
+            let value_ptr = ffi::rocksdb_table_properties_get_user_collected_property(
+                self.table_properties.as_ptr(),
+                key_cstring.as_ptr(),
+            );
+
+            if value_ptr.is_null() {
+                return None;
+            }
+
+            let value_string = CStr::from_ptr(value_ptr);
+            Some(value_string)
+        }
+    }
+
+    pub fn get_user_collected_property_keys(&self, prefix: impl CStrLike) -> Vec<&CStr> {
+        unsafe {
+            let mut key_count: usize = 0;
+            let prefix = prefix.into_c_string().unwrap();
+            let keys_ptr = ffi::rocksdb_table_properties_get_user_collected_property_keys(
+                self.table_properties.as_ptr(),
+                prefix.as_ptr(),
+                &mut key_count,
+            );
+
+            if keys_ptr.is_null() {
+                return Vec::new();
+            }
+
+            let mut result = Vec::with_capacity(key_count);
+            for i in 0..key_count {
+                let key_ptr = *keys_ptr.add(i);
+                if !key_ptr.is_null() {
+                    result.push(CStr::from_ptr(key_ptr));
+                }
+            }
+            ffi::rocksdb_free(keys_ptr as *mut c_void);
+
+            result
+        }
+    }
+}
+
+impl Drop for FlushJobInfo {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::rocksdb_table_properties_destroy(self.table_properties.as_ptr());
+        }
     }
 }
 
@@ -524,7 +587,11 @@ unsafe extern "C" fn on_flush_begin<E: EventListener>(
     info: *const ffi::rocksdb_flushjobinfo_t,
 ) {
     let ctx = unsafe { &*(ctx as *mut E) };
-    let info = FlushJobInfo { inner: info };
+    let table_properties = unsafe { ffi::rocksdb_flushjobinfo_table_properties(info).cast_mut() };
+    let info = FlushJobInfo {
+        inner: info,
+        table_properties: NonNull::new(table_properties).unwrap(),
+    };
     ctx.on_flush_begin(&info);
 }
 
@@ -534,7 +601,11 @@ extern "C" fn on_flush_completed<E: EventListener>(
     info: *const ffi::rocksdb_flushjobinfo_t,
 ) {
     let ctx = unsafe { &*(ctx as *mut E) };
-    let info = FlushJobInfo { inner: info };
+    let table_properties = unsafe { ffi::rocksdb_flushjobinfo_table_properties(info).cast_mut() };
+    let info = FlushJobInfo {
+        inner: info,
+        table_properties: NonNull::new(table_properties).unwrap(),
+    };
     ctx.on_flush_completed(&info);
 }
 
