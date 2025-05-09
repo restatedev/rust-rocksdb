@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -155,7 +155,7 @@ impl Drop for FlushJobInfo<'_> {
 }
 
 impl FlushJobInfo<'_> {
-    pub fn get_user_collected_property(&self, key: impl CStrLike) -> Option<CString> {
+    pub fn get_user_collected_property(&self, key: impl CStrLike) -> Option<&CStr> {
         unsafe {
             let key_cstring = key.into_c_string().unwrap();
             let value_ptr = ffi::rocksdb_table_properties_get_user_collected_property(
@@ -167,17 +167,18 @@ impl FlushJobInfo<'_> {
                 return None;
             }
 
-            let value_string = CStr::from_ptr(value_ptr).to_owned();
-            ffi::rocksdb_free(value_ptr as *mut c_void);
+            let value_string = CStr::from_ptr(value_ptr);
             Some(value_string)
         }
     }
 
-    pub fn get_user_collected_property_keys(&self) -> Vec<CString> {
+    pub fn get_user_collected_property_keys(&self, prefix: Option<impl CStrLike>) -> Vec<&CStr> {
         unsafe {
             let mut key_count: usize = 0;
+            let prefix = prefix.map_or_else(|| c"".to_owned(), |p| p.into_c_string().unwrap());
             let keys_ptr = ffi::rocksdb_table_properties_get_user_collected_property_keys(
                 self.table_properties.as_ptr(),
+                prefix.as_ptr(),
                 &mut key_count,
             );
 
@@ -189,8 +190,7 @@ impl FlushJobInfo<'_> {
             for i in 0..key_count {
                 let key_ptr = *keys_ptr.add(i);
                 if !key_ptr.is_null() {
-                    result.push(CStr::from_ptr(key_ptr).to_owned());
-                    ffi::rocksdb_free(key_ptr as *mut c_void);
+                    result.push(CStr::from_ptr(key_ptr));
                 }
             }
             ffi::rocksdb_free(keys_ptr as *mut c_void);

@@ -180,7 +180,14 @@ impl EventListener for CustomPropertyListener {
     fn on_flush_completed(&self, info: FlushJobInfo) {
         let mut guard = self.state.write();
         guard.flush_count += 1;
-        guard.latest_persisted_key_count = info.get_user_collected_property("key_count");
-        guard.all_keys = Some(info.get_user_collected_property_keys());
+        guard.latest_persisted_key_count = info
+            .get_user_collected_property("key_count")
+            .map(|cstr| cstr.to_owned());
+        guard.all_keys = Some(
+            info.get_user_collected_property_keys(Some(c"key_"))
+                .iter()
+                .map(|&cstr| cstr.to_owned())
+                .collect(),
+        );
     }
 }
