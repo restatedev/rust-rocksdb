@@ -2626,7 +2626,7 @@ impl<I: DBInner> DBCommon<SingleThreaded, I> {
 
     /// Returns the list of column families currently open
     pub fn cf_names(&self) -> Vec<String> {
-        self.cfs.cfs.keys().cloned().collect()
+        self.cfs.cfs.keys().map(ToString::to_string).collect()
     }
 }
 
@@ -2665,7 +2665,12 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
 
     /// Returns the list of column families currently open
     pub fn cf_names(&self) -> Vec<String> {
-        self.cfs.cfs.read().keys().cloned().collect()
+        self.cfs
+            .cfs
+            .read()
+            .keys()
+            .map(ToString::to_string)
+            .collect()
     }
 }
 
