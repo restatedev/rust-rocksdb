@@ -3511,7 +3511,7 @@ impl<I: DBInner> DBCommon<SingleThreaded, I> {
     ///
     /// The order of names is unspecified and may vary between calls.
     pub fn cf_names(&self) -> Vec<String> {
-        self.cfs.cfs.keys().cloned().collect()
+        self.cfs.cfs.keys().map(ToString::to_string).collect()
     }
 }
 
@@ -3584,7 +3584,12 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
     ///
     /// The order of names is unspecified and may vary between calls.
     pub fn cf_names(&self) -> Vec<String> {
-        self.cfs.cfs.read().keys().cloned().collect()
+        self.cfs
+            .cfs
+            .read()
+            .keys()
+            .map(ToString::to_string)
+            .collect()
     }
 }
 
