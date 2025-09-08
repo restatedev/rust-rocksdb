@@ -45,6 +45,7 @@ rust-librocksdb-sys = { path = "librocksdb-sys", version = "0.42.0", default-fea
     "static",
 ] }
 serde = { version = "1", features = ["derive"], optional = true }
+smallvec = { version = "1" }
 parking_lot = { version = "0.12" }
 smartstring = { version = "1.0" }
 
