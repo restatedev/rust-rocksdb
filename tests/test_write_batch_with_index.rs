@@ -36,3 +36,69 @@ fn test_write_batch_with_index_with_base_iterator() {
         assert_no_item(&iterator);
     }
 }
+
+#[test]
+fn test_write_batch_with_index_with_rollback_to_savepoint() {
+    let path = DBPath::new("_rust_rocksdb_wbwi_savepoint");
+    {
+        let db = DB::open_default(&path).expect("DB should open");
+
+        db.put(b"k1", b"v1").unwrap();
+        assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v1");
+
+        let mut wbwi = WriteBatchWithIndex::new(0, true);
+
+        let readopts = ReadOptions::default();
+        assert_eq!(
+            wbwi.get_from_batch_and_db(&db, b"k1", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v1"
+        );
+        wbwi.put(b"k1", b"v2");
+        assert_eq!(
+            wbwi.get_from_batch_and_db(&db, b"k1", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v2"
+        );
+        wbwi.set_savepoint();
+        wbwi.put(b"k1", b"v3");
+        assert_eq!(
+            wbwi.get_from_batch_and_db(&db, b"k1", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v3"
+        );
+        wbwi.set_savepoint();
+        wbwi.put(b"k1", b"v4");
+        assert_eq!(
+            wbwi.get_from_batch_and_db(&db, b"k1", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v4"
+        );
+        // first rollback
+        wbwi.rollback_to_savepoint().unwrap();
+        assert_eq!(
+            wbwi.get_from_batch_and_db(&db, b"k1", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v3"
+        );
+        // second rollback
+        wbwi.rollback_to_savepoint().unwrap();
+        assert_eq!(
+            wbwi.get_from_batch_and_db(&db, b"k1", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v2"
+        );
+
+        // can't rollback more
+        assert!(wbwi.rollback_to_savepoint().is_err());
+        db.write_wbwi(&wbwi).unwrap();
+
+        assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v2");
+    }
+}
