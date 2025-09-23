@@ -34,6 +34,31 @@ impl WriteBatchWithIndex {
         }
     }
 
+    /// Record the state of the operations for future calls to [`rollback_to_savepoint`].
+    /// May be called multiple times to set multiple save points.
+    ///
+    /// [`rollback_to_savepoint`]: Self::rollback_to_savepoint
+    pub fn set_savepoint(&mut self) {
+        unsafe {
+            ffi::rocksdb_writebatch_wi_set_save_point(self.inner);
+        }
+    }
+
+    /// Undo all operations in this batch since the most recent call to [`set_savepoint`]
+    /// and removes the most recent [`set_savepoint`].
+    ///
+    /// Returns error if there is no previous call to [`set_savepoint`].
+    ///
+    /// [`set_savepoint`]: Self::set_savepoint
+    pub fn rollback_to_savepoint(&mut self) -> Result<(), Error> {
+        unsafe {
+            ffi_try!(ffi::rocksdb_writebatch_wi_rollback_to_save_point(
+                self.inner
+            ));
+            Ok(())
+        }
+    }
+
     /// Return a reference to a byte array which represents a serialized version of the batch.
     pub fn data(&self) -> &[u8] {
         unsafe {
