@@ -324,3 +324,31 @@ fn test_write_batch_merge_vectored_no_cf() {
     let retrieved = db.get(b"merge_key").unwrap();
     assert_eq!(retrieved.unwrap(), b"initialvalue");
 }
+
+#[test]
+fn test_write_batch_with_rollback_to_savepoint() {
+    let path = DBPath::new("writebatch_savepoint");
+    {
+        let db = DB::open_default(&path).expect("DB should open");
+
+        db.put(b"k1", b"v1").unwrap();
+        assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v1");
+
+        let mut batch = WriteBatch::default();
+
+        batch.put(b"k1", b"v2");
+        batch.set_savepoint();
+        batch.put(b"k1", b"v3");
+        batch.set_savepoint();
+        batch.put(b"k1", b"v4");
+        // first rollback
+        batch.rollback_to_savepoint().unwrap();
+        // second rollback
+        batch.rollback_to_savepoint().unwrap();
+        // can't rollback more
+        assert!(batch.rollback_to_savepoint().is_err());
+        db.write(&batch).unwrap();
+
+        assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v2");
+    }
+}
