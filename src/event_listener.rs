@@ -3,7 +3,7 @@ use std::ptr::NonNull;
 
 use libc::{c_char, c_void};
 
-use crate::ffi_util::{convert_rocksdb_error, error_message};
+use crate::ffi_util::convert_rocksdb_error;
 use crate::{ffi, CStrLike, Error};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
