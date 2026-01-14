@@ -1,11 +1,11 @@
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
 use std::mem;
 use std::slice;
 
 use libc::{c_int, size_t};
 
-use crate::{ffi, Options};
+use crate::{Options, ffi};
 
 /// Extension trait for [`Options`] to register table properties collectors
 pub trait TablePropertiesExt {
@@ -136,35 +136,44 @@ where
         raw_self: *mut c_void,
         ctx: *mut ffi::rocksdb_table_properties_collector_context_t,
     ) -> *mut ffi::rocksdb_table_properties_collector_t {
-        let context = TablePropertiesCollectorContext {
+        // SAFETY: ctx is a valid pointer provided by RocksDB
+        let context = unsafe {
+            TablePropertiesCollectorContext {
                 column_family_id: ffi::rocksdb_table_properties_collector_context_get_column_family_id(ctx),
                 level_at_creation: ffi::rocksdb_table_properties_collector_context_get_level_at_creation(ctx),
                 num_levels: ffi::rocksdb_table_properties_collector_context_get_num_levels(ctx),
                 last_level_inclusive_max_seqno_threshold:
                     ffi::rocksdb_table_properties_collector_context_get_last_level_inclusive_max_seqno_threshold(ctx),
-            };
+            }
+        };
 
-        let factory: &mut F = &mut *(raw_self.cast());
+        // SAFETY: raw_self is a valid pointer to F created in add_table_properties_collector_factory
+        let factory: &mut F = unsafe { &mut *(raw_self.cast()) };
         let collector = Box::new(factory.create(context));
 
-        ffi::rocksdb_table_properties_collector_create(
-            Box::into_raw(collector).cast(),
-            Some(TablePropertiesCollectorCallback::<F::Collector>::destructor),
-            Some(TablePropertiesCollectorCallback::<F::Collector>::add_user_key),
-            Some(TablePropertiesCollectorCallback::<F::Collector>::block_add),
-            Some(TablePropertiesCollectorCallback::<F::Collector>::finish),
-            Some(TablePropertiesCollectorCallback::<F::Collector>::get_readable_properties),
-            Some(TablePropertiesCollectorCallback::<F::Collector>::name),
-        )
+        // SAFETY: FFI call with valid pointers
+        unsafe {
+            ffi::rocksdb_table_properties_collector_create(
+                Box::into_raw(collector).cast(),
+                Some(TablePropertiesCollectorCallback::<F::Collector>::destructor),
+                Some(TablePropertiesCollectorCallback::<F::Collector>::add_user_key),
+                Some(TablePropertiesCollectorCallback::<F::Collector>::block_add),
+                Some(TablePropertiesCollectorCallback::<F::Collector>::finish),
+                Some(TablePropertiesCollectorCallback::<F::Collector>::get_readable_properties),
+                Some(TablePropertiesCollectorCallback::<F::Collector>::name),
+            )
+        }
     }
 
     unsafe extern "C" fn name(raw_self: *mut c_void) -> *const c_char {
-        let factory = &*(raw_self.cast_const() as *const F);
+        // SAFETY: raw_self is a valid pointer to F created in add_table_properties_collector_factory
+        let factory = unsafe { &*(raw_self.cast_const() as *const F) };
         factory.name().as_ptr()
     }
 
     unsafe extern "C" fn destructor(raw_self: *mut c_void) {
-        drop(Box::from_raw(raw_self as *mut F));
+        // SAFETY: raw_self is a valid pointer to F created in add_table_properties_collector_factory
+        drop(unsafe { Box::from_raw(raw_self as *mut F) });
     }
 }
 
@@ -180,11 +189,13 @@ where
     C: TablePropertiesCollector,
 {
     unsafe extern "C" fn destructor(raw_collector: *mut c_void) {
-        drop(Box::from_raw(raw_collector as *mut C));
+        // SAFETY: raw_collector is a valid pointer to C created in create_collector
+        drop(unsafe { Box::from_raw(raw_collector as *mut C) });
     }
 
     unsafe extern "C" fn name(raw_collector: *mut c_void) -> *const c_char {
-        let collector: &mut C = &mut *(raw_collector.cast());
+        // SAFETY: raw_collector is a valid pointer to C created in create_collector
+        let collector: &mut C = unsafe { &mut *(raw_collector.cast()) };
         collector.name().as_ptr()
     }
 
@@ -198,11 +209,14 @@ where
         seq: u64,
         file_size: u64,
     ) -> bool {
-        let collector: &mut C = &mut *(raw_collector.cast());
+        // SAFETY: raw_collector is a valid pointer to C created in create_collector
+        let collector: &mut C = unsafe { &mut *(raw_collector.cast()) };
 
-        let key = slice::from_raw_parts(key_ptr as *const u8, key_len);
-        let value = slice::from_raw_parts(value_ptr as *const u8, value_len);
-        let entry_type = mem::transmute::<c_int, EntryType>(entry_type);
+        // SAFETY: key_ptr and value_ptr are valid pointers provided by RocksDB with correct lengths
+        let key = unsafe { slice::from_raw_parts(key_ptr as *const u8, key_len) };
+        let value = unsafe { slice::from_raw_parts(value_ptr as *const u8, value_len) };
+        // SAFETY: entry_type is a valid EntryType value from RocksDB
+        let entry_type = unsafe { mem::transmute::<c_int, EntryType>(entry_type) };
 
         collector
             .add_user_key(key, value, entry_type, seq, file_size)
@@ -215,7 +229,8 @@ where
         block_compressed_bytes_fast: u64,
         block_compressed_bytes_slow: u64,
     ) {
-        let collector: &mut C = &mut *(raw_collector.cast());
+        // SAFETY: raw_collector is a valid pointer to C created in create_collector
+        let collector: &mut C = unsafe { &mut *(raw_collector.cast()) };
         collector.block_add(
             block_uncompressed_bytes,
             block_compressed_bytes_fast,
@@ -227,7 +242,8 @@ where
         raw_collector: *mut c_void,
         user_collected_properties: *mut ffi::rocksdb_user_collected_properties_t,
     ) -> bool {
-        let collector: &mut C = &mut *(raw_collector.cast());
+        // SAFETY: raw_collector is a valid pointer to C created in create_collector
+        let collector: &mut C = unsafe { &mut *(raw_collector.cast()) };
 
         let Ok(props) = collector.finish() else {
             // An error will be logged by RocksDB to its own log, though the details will be swallowed.
@@ -236,11 +252,14 @@ where
         };
 
         for (key, value) in props {
-            ffi::rocksdb_user_collected_properties_insert(
-                user_collected_properties,
-                key.as_ref().as_ptr(),
-                value.as_ref().as_ptr(),
-            );
+            // SAFETY: user_collected_properties is a valid pointer provided by RocksDB
+            unsafe {
+                ffi::rocksdb_user_collected_properties_insert(
+                    user_collected_properties,
+                    key.as_ref().as_ptr(),
+                    value.as_ref().as_ptr(),
+                );
+            }
         }
 
         true
@@ -250,15 +269,19 @@ where
         raw_collector: *mut c_void,
         user_collected_properties: *mut ffi::rocksdb_user_collected_properties_t,
     ) {
-        let collector: &mut C = &mut *(raw_collector.cast());
+        // SAFETY: raw_collector is a valid pointer to C created in create_collector
+        let collector: &mut C = unsafe { &mut *(raw_collector.cast()) };
         let props = collector.get_readable_properties();
 
         for (key, value) in props {
-            ffi::rocksdb_user_collected_properties_insert(
-                user_collected_properties,
-                key.as_ref().as_ptr(),
-                value.as_ref().as_ptr(),
-            );
+            // SAFETY: user_collected_properties is a valid pointer provided by RocksDB
+            unsafe {
+                ffi::rocksdb_user_collected_properties_insert(
+                    user_collected_properties,
+                    key.as_ref().as_ptr(),
+                    value.as_ref().as_ptr(),
+                );
+            }
         }
     }
 }
