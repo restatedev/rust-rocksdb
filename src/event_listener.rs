@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 use libc::{c_char, c_void};
 
 use crate::ffi_util::convert_rocksdb_error;
-use crate::{ffi, CStrLike, Error};
+use crate::{CStrLike, Error, ffi};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
@@ -292,7 +292,7 @@ impl FlushJobInfo {
             let keys_ptr = ffi::rocksdb_table_properties_get_user_collected_property_keys(
                 self.table_properties.as_ptr(),
                 prefix.as_ptr(),
-                &mut key_count,
+                &raw mut key_count,
             );
 
             if keys_ptr.is_null() {
@@ -582,7 +582,7 @@ extern "C" fn destructor<E: EventListener>(ctx: *mut c_void) {
     }
 }
 
-unsafe extern "C" fn on_flush_begin<E: EventListener>(
+extern "C" fn on_flush_begin<E: EventListener>(
     ctx: *mut c_void,
     _: *mut ffi::rocksdb_t,
     info: *const ffi::rocksdb_flushjobinfo_t,
