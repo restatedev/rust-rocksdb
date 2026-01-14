@@ -17,7 +17,10 @@ use std::collections::HashMap;
 
 use pretty_assertions::assert_eq;
 
-use rust_rocksdb::{DB, Error, WriteBatch, WriteBatchIterator, WriteBatchIteratorCf, ColumnFamilyDescriptor, Options, };
+use rust_rocksdb::{
+    ColumnFamilyDescriptor, DB, Error, Options, WriteBatch, WriteBatchIterator,
+    WriteBatchIteratorCf,
+};
 use std::io::IoSlice;
 use util::DBPath;
 
