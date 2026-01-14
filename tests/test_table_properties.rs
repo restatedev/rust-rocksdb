@@ -1,8 +1,8 @@
 mod util;
 
 use std::ffi::{CStr, CString};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use parking_lot::RwLock;
 
@@ -11,7 +11,7 @@ use rust_rocksdb::table_properties::{
     CollectorError, EntryType, TablePropertiesCollector, TablePropertiesCollectorContext,
     TablePropertiesCollectorFactory, TablePropertiesExt,
 };
-use rust_rocksdb::{Options, DB};
+use rust_rocksdb::{DB, Options};
 use util::DBPath;
 
 #[test]
