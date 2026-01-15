@@ -2,7 +2,7 @@ mod util;
 
 use std::ffi::{CStr, CString};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use parking_lot::RwLock;
 
@@ -200,9 +200,9 @@ fn test_table_properties_collector_need_compact() {
     opts.create_missing_column_families(true);
 
     let mut cf_opts = Options::default();
-    let need_compact_count = Arc::new(AtomicU32::new(0));
+    let returned_need_compact = Arc::new(AtomicBool::new(false));
     let collector_factory = NeedCompactCollectorFactory {
-        need_compact_count: Arc::clone(&need_compact_count),
+        returned_need_compact: Arc::clone(&returned_need_compact),
     };
     cf_opts.add_table_properties_collector_factory(collector_factory);
 
@@ -213,26 +213,26 @@ fn test_table_properties_collector_need_compact() {
     // Write keys that don't trigger need_compact
     db.put_cf(&cf, b"normal_key", b"value").unwrap();
     db.flush_cf(&cf).unwrap();
-    assert_eq!(
-        need_compact_count.load(Ordering::Relaxed),
-        0,
-        "need_compact should NOT have been called"
+
+    // need_compact should have returned false (no keys starting with "compact")
+    assert!(
+        !returned_need_compact.load(Ordering::Relaxed),
+        "need_compact should have returned false"
     );
 
-    // Write a key that triggers need_compact
+    // Write a key that triggers need_compact to return true
     db.put_cf(&cf, b"compact_me", b"value").unwrap();
     db.flush_cf(&cf).unwrap();
 
-    // The need_compact callback should have been called at least once
-    // (RocksDB calls it after finish() to check if compaction is needed)
+    // need_compact should have returned true this time
     assert!(
-        need_compact_count.load(Ordering::Relaxed) > 0,
-        "need_compact should have been called"
+        returned_need_compact.load(Ordering::Relaxed),
+        "need_compact should have returned true"
     );
 }
 
 struct NeedCompactCollectorFactory {
-    need_compact_count: Arc<AtomicU32>,
+    returned_need_compact: Arc<AtomicBool>,
 }
 
 impl TablePropertiesCollectorFactory for NeedCompactCollectorFactory {
@@ -240,7 +240,7 @@ impl TablePropertiesCollectorFactory for NeedCompactCollectorFactory {
 
     fn create(&mut self, _context: TablePropertiesCollectorContext) -> Self::Collector {
         NeedCompactCollector {
-            need_compact_count: Arc::clone(&self.need_compact_count),
+            returned_need_compact: Arc::clone(&self.returned_need_compact),
             should_compact: false,
         }
     }
@@ -251,7 +251,7 @@ impl TablePropertiesCollectorFactory for NeedCompactCollectorFactory {
 }
 
 struct NeedCompactCollector {
-    need_compact_count: Arc<AtomicU32>,
+    returned_need_compact: Arc<AtomicBool>,
     should_compact: bool,
 }
 
@@ -284,7 +284,9 @@ impl TablePropertiesCollector for NeedCompactCollector {
     }
 
     fn need_compact(&self) -> bool {
-        self.need_compact_count.fetch_add(1, Ordering::Relaxed);
+        if self.should_compact {
+            self.returned_need_compact.store(true, Ordering::Relaxed);
+        }
         self.should_compact
     }
 }
