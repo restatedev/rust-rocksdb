@@ -213,6 +213,11 @@ fn test_table_properties_collector_need_compact() {
     // Write keys that don't trigger need_compact
     db.put_cf(&cf, b"normal_key", b"value").unwrap();
     db.flush_cf(&cf).unwrap();
+    assert_eq!(
+        need_compact_count.load(Ordering::Relaxed),
+        0,
+        "need_compact should NOT have been called"
+    );
 
     // Write a key that triggers need_compact
     db.put_cf(&cf, b"compact_me", b"value").unwrap();
