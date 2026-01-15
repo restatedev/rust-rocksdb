@@ -104,6 +104,11 @@ pub trait TablePropertiesCollector {
 
     /// Name of the collector to use for logging
     fn name(&self) -> &CStr;
+
+    /// Returns whether the output file should be further compacted
+    fn need_compact(&self) -> bool {
+        false
+    }
 }
 
 /// Collector error
@@ -161,6 +166,7 @@ where
                 Some(TablePropertiesCollectorCallback::<F::Collector>::finish),
                 Some(TablePropertiesCollectorCallback::<F::Collector>::get_readable_properties),
                 Some(TablePropertiesCollectorCallback::<F::Collector>::name),
+                Some(TablePropertiesCollectorCallback::<F::Collector>::need_compact),
             )
         }
     }
@@ -283,5 +289,11 @@ where
                 );
             }
         }
+    }
+
+    unsafe extern "C" fn need_compact(raw_collector: *mut c_void) -> bool {
+        // SAFETY: raw_collector is a valid pointer to C created in create_collector
+        let collector: &C = unsafe { &*(raw_collector.cast_const() as *const C) };
+        collector.need_compact()
     }
 }
