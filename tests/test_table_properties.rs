@@ -2,7 +2,7 @@ mod util;
 
 use std::ffi::{CStr, CString};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use parking_lot::RwLock;
 
@@ -188,5 +188,105 @@ impl EventListener for CustomPropertyListener {
                 .map(|&cstr| cstr.to_owned())
                 .collect(),
         );
+    }
+}
+
+#[test]
+fn test_table_properties_collector_need_compact() {
+    let path = DBPath::new("_rust_rocksdb_properties_collector_need_compact_test");
+
+    let mut opts = Options::default();
+    opts.create_if_missing(true);
+    opts.create_missing_column_families(true);
+
+    let mut cf_opts = Options::default();
+    let returned_need_compact = Arc::new(AtomicBool::new(false));
+    let collector_factory = NeedCompactCollectorFactory {
+        returned_need_compact: Arc::clone(&returned_need_compact),
+    };
+    cf_opts.add_table_properties_collector_factory(collector_factory);
+
+    let db = DB::open_cf_with_opts(&opts, &path, [("cf", cf_opts)]).unwrap();
+
+    let cf = db.cf_handle("cf").unwrap();
+
+    // Write keys that don't trigger need_compact
+    db.put_cf(&cf, b"normal_key", b"value").unwrap();
+    db.flush_cf(&cf).unwrap();
+
+    // need_compact should have returned false (no keys starting with "compact")
+    assert!(
+        !returned_need_compact.load(Ordering::Relaxed),
+        "need_compact should have returned false"
+    );
+
+    // Write a key that triggers need_compact to return true
+    db.put_cf(&cf, b"compact_me", b"value").unwrap();
+    db.flush_cf(&cf).unwrap();
+
+    // need_compact should have returned true this time
+    assert!(
+        returned_need_compact.load(Ordering::Relaxed),
+        "need_compact should have returned true"
+    );
+}
+
+struct NeedCompactCollectorFactory {
+    returned_need_compact: Arc<AtomicBool>,
+}
+
+impl TablePropertiesCollectorFactory for NeedCompactCollectorFactory {
+    type Collector = NeedCompactCollector;
+
+    fn create(&mut self, _context: TablePropertiesCollectorContext) -> Self::Collector {
+        NeedCompactCollector {
+            returned_need_compact: Arc::clone(&self.returned_need_compact),
+            should_compact: false,
+        }
+    }
+
+    fn name(&self) -> &CStr {
+        c"NeedCompactCollectorFactory"
+    }
+}
+
+struct NeedCompactCollector {
+    returned_need_compact: Arc<AtomicBool>,
+    should_compact: bool,
+}
+
+impl TablePropertiesCollector for NeedCompactCollector {
+    fn add_user_key(
+        &mut self,
+        key: &[u8],
+        _value: &[u8],
+        _entry_type: EntryType,
+        _seq: u64,
+        _file_size: u64,
+    ) -> Result<(), CollectorError> {
+        // Mark for compaction if we see a key starting with "compact"
+        if key.starts_with(b"compact") {
+            self.should_compact = true;
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<impl IntoIterator<Item = &(CString, CString)>, CollectorError> {
+        Ok(std::iter::empty())
+    }
+
+    fn get_readable_properties(&self) -> impl IntoIterator<Item = &(CString, CString)> {
+        std::iter::empty()
+    }
+
+    fn name(&self) -> &CStr {
+        c"NeedCompactCollector"
+    }
+
+    fn need_compact(&self) -> bool {
+        if self.should_compact {
+            self.returned_need_compact.store(true, Ordering::Relaxed);
+        }
+        self.should_compact
     }
 }
