@@ -440,12 +440,61 @@ fn set_column_family_metadata_test() {
         db.flush_cf(&cf2).unwrap();
 
         let default_cf_metadata = db.get_column_family_metadata();
-        assert_eq!(default_cf_metadata.size > 150, true);
-        assert_eq!(default_cf_metadata.file_count, 1);
+        let default_cf_size = default_cf_metadata.size();
+        assert!(default_cf_size > 150);
+        assert_eq!(default_cf_metadata.file_count(), 1);
+        assert_eq!(default_cf_metadata.name(), DEFAULT_COLUMN_FAMILY_NAME);
+
+        // Verify level metadata using lazy accessors
+        assert!(default_cf_metadata.level_count() > 0);
+
+        // After flush, data should be in L0 (level 0)
+        // Calculate total size from levels
+        let total_level_size: u64 = default_cf_metadata.levels().map(|l| l.size()).sum();
+        assert_eq!(default_cf_size, total_level_size);
+
+        // Find the level with files (should be L0 after flush)
+        let levels_with_files_count = default_cf_metadata
+            .levels()
+            .filter(|l| l.file_count() > 0)
+            .count();
+        assert!(levels_with_files_count > 0);
+
+        // Verify SST file metadata using lazy accessors
+        for level in default_cf_metadata.levels() {
+            for file in level.files() {
+                assert!(!file.relative_filename().is_empty());
+                assert!(!file.directory().is_empty());
+                assert!(file.size() > 0);
+                // After flush, files should have keys
+                assert!(file.smallest_key().is_some());
+                assert!(file.largest_key().is_some());
+            }
+        }
 
         let cf2_metadata = db.get_column_family_metadata_cf(&cf2);
-        assert_eq!(cf2_metadata.size > default_cf_metadata.size, true);
-        assert_eq!(cf2_metadata.file_count, 1);
+        assert!(cf2_metadata.size() > default_cf_size);
+        assert_eq!(cf2_metadata.file_count(), 1);
+        assert_eq!(cf2_metadata.name(), "cf2");
+
+        // Verify cf2 level metadata
+        assert!(cf2_metadata.level_count() > 0);
+        let cf2_total_level_size: u64 = cf2_metadata.levels().map(|l| l.size()).sum();
+        assert_eq!(cf2_metadata.size(), cf2_total_level_size);
+
+        // Verify cf2 has files with expected keys
+        // Find a level with files and check the first file
+        let mut found_file = false;
+        for level in cf2_metadata.levels() {
+            if let Some(file) = level.file(0) {
+                // cf2 should have keys key1, key2, key3 so smallest should be key1 and largest key3
+                assert_eq!(file.smallest_key().as_deref(), Some(b"key1".as_slice()));
+                assert_eq!(file.largest_key().as_deref(), Some(b"key3".as_slice()));
+                found_file = true;
+                break;
+            }
+        }
+        assert!(found_file, "cf2 should have at least one file");
     }
 }
 
