@@ -3252,44 +3252,38 @@ impl<T: ThreadMode, D: DBInner> DBCommon<T, D> {
         }
     }
 
-    /// Obtains the LSM-tree meta data of the default column family of the DB
-    pub fn get_column_family_metadata(&self) -> ColumnFamilyMetaData {
+    /// Obtains the LSM-tree meta data of the default column family of the DB.
+    ///
+    /// Returns a wrapper that provides lazy access to the metadata fields.
+    /// The metadata is fetched from RocksDB only when accessor methods are called.
+    ///
+    /// The returned reference is tied to the lifetime of the database.
+    pub fn get_column_family_metadata(&self) -> ColumnFamilyMetaDataRef<'_> {
         unsafe {
             let ptr = ffi::rocksdb_get_column_family_metadata(self.inner.inner());
-
-            let metadata = ColumnFamilyMetaData {
-                size: ffi::rocksdb_column_family_metadata_get_size(ptr),
-                name: from_cstr_and_free(ffi::rocksdb_column_family_metadata_get_name(ptr)),
-                file_count: ffi::rocksdb_column_family_metadata_get_file_count(ptr),
-            };
-
-            // destroy
-            ffi::rocksdb_column_family_metadata_destroy(ptr);
-
-            // return
-            metadata
+            ColumnFamilyMetaDataRef {
+                ptr,
+                _marker: std::marker::PhantomData,
+            }
         }
     }
 
-    /// Obtains the LSM-tree meta data of the specified column family of the DB
+    /// Obtains the LSM-tree meta data of the specified column family of the DB.
+    ///
+    /// Returns a wrapper that provides lazy access to the metadata fields.
+    /// The metadata is fetched from RocksDB only when accessor methods are called.
+    ///
+    /// The returned reference is tied to the lifetime of the database.
     pub fn get_column_family_metadata_cf(
         &self,
         cf: &impl AsColumnFamilyRef,
-    ) -> ColumnFamilyMetaData {
+    ) -> ColumnFamilyMetaDataRef<'_> {
         unsafe {
             let ptr = ffi::rocksdb_get_column_family_metadata_cf(self.inner.inner(), cf.inner());
-
-            let metadata = ColumnFamilyMetaData {
-                size: ffi::rocksdb_column_family_metadata_get_size(ptr),
-                name: from_cstr_and_free(ffi::rocksdb_column_family_metadata_get_name(ptr)),
-                file_count: ffi::rocksdb_column_family_metadata_get_file_count(ptr),
-            };
-
-            // destroy
-            ffi::rocksdb_column_family_metadata_destroy(ptr);
-
-            // return
-            metadata
+            ColumnFamilyMetaDataRef {
+                ptr,
+                _marker: std::marker::PhantomData,
+            }
         }
     }
 
@@ -3588,16 +3582,196 @@ impl<T: ThreadMode, I: DBInner> fmt::Debug for DBCommon<T, I> {
     }
 }
 
-/// The metadata that describes a column family.
-#[derive(Debug, Clone)]
-pub struct ColumnFamilyMetaData {
-    // The size of this column family in bytes, which is equal to the sum of
-    // the file size of its "levels".
-    pub size: u64,
-    // The name of the column family.
-    pub name: String,
-    // The number of files in this column family.
-    pub file_count: usize,
+/// A wrapper around a RocksDB SST file metadata pointer.
+///
+/// This struct provides lazy access to SST file metadata fields.
+/// The lifetime `'a` is tied to the parent `LevelMetaDataRef`.
+pub struct SstFileMetaDataRef<'a> {
+    ptr: *mut ffi::rocksdb_sst_file_metadata_t,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl SstFileMetaDataRef<'_> {
+    /// Returns the relative file name without the directory path.
+    pub fn relative_filename(&self) -> String {
+        unsafe {
+            from_cstr_and_free(ffi::rocksdb_sst_file_metadata_get_relative_filename(
+                self.ptr,
+            ))
+        }
+    }
+
+    /// Returns the directory containing this file.
+    pub fn directory(&self) -> String {
+        unsafe { from_cstr_and_free(ffi::rocksdb_sst_file_metadata_get_directory(self.ptr)) }
+    }
+
+    /// Returns the size of the file in bytes.
+    pub fn size(&self) -> u64 {
+        unsafe { ffi::rocksdb_sst_file_metadata_get_size(self.ptr) }
+    }
+
+    /// Returns the smallest user key in the file.
+    pub fn smallest_key(&self) -> Option<Vec<u8>> {
+        unsafe {
+            let mut key_len: size_t = 0;
+            let key_ptr =
+                ffi::rocksdb_sst_file_metadata_get_smallestkey(self.ptr, &raw mut key_len);
+            if key_ptr.is_null() {
+                None
+            } else {
+                let key = std::slice::from_raw_parts(key_ptr as *const u8, key_len).to_vec();
+                ffi::rocksdb_free(key_ptr as *mut c_void);
+                Some(key)
+            }
+        }
+    }
+
+    /// Returns the largest user key in the file.
+    pub fn largest_key(&self) -> Option<Vec<u8>> {
+        unsafe {
+            let mut key_len: size_t = 0;
+            let key_ptr = ffi::rocksdb_sst_file_metadata_get_largestkey(self.ptr, &raw mut key_len);
+            if key_ptr.is_null() {
+                None
+            } else {
+                let key = std::slice::from_raw_parts(key_ptr as *const u8, key_len).to_vec();
+                ffi::rocksdb_free(key_ptr as *mut c_void);
+                Some(key)
+            }
+        }
+    }
+}
+
+impl Drop for SstFileMetaDataRef<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::rocksdb_sst_file_metadata_destroy(self.ptr);
+        }
+    }
+}
+
+/// A wrapper around a RocksDB level metadata pointer.
+///
+/// This struct provides lazy access to level metadata fields.
+/// The lifetime `'a` is tied to the parent `ColumnFamilyMetaDataRef`.
+pub struct LevelMetaDataRef<'a> {
+    ptr: *mut ffi::rocksdb_level_metadata_t,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl LevelMetaDataRef<'_> {
+    /// Returns the level number.
+    pub fn level(&self) -> i32 {
+        unsafe { ffi::rocksdb_level_metadata_get_level(self.ptr) }
+    }
+
+    /// Returns the size of this level in bytes.
+    pub fn size(&self) -> u64 {
+        unsafe { ffi::rocksdb_level_metadata_get_size(self.ptr) }
+    }
+
+    /// Returns the number of SST files in this level.
+    pub fn file_count(&self) -> usize {
+        unsafe { ffi::rocksdb_level_metadata_get_file_count(self.ptr) }
+    }
+
+    /// Returns the metadata for the SST file at the given index.
+    ///
+    /// Returns `None` if the index is out of bounds.
+    pub fn file(&self, index: usize) -> Option<SstFileMetaDataRef<'_>> {
+        unsafe {
+            let file_ptr = ffi::rocksdb_level_metadata_get_sst_file_metadata(self.ptr, index);
+            if file_ptr.is_null() {
+                None
+            } else {
+                Some(SstFileMetaDataRef {
+                    ptr: file_ptr,
+                    _marker: std::marker::PhantomData,
+                })
+            }
+        }
+    }
+
+    /// Returns an iterator over all SST files in this level.
+    pub fn files(&self) -> impl Iterator<Item = SstFileMetaDataRef<'_>> {
+        let count = self.file_count();
+        (0..count).filter_map(move |i| self.file(i))
+    }
+}
+
+impl Drop for LevelMetaDataRef<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::rocksdb_level_metadata_destroy(self.ptr);
+        }
+    }
+}
+
+/// A wrapper around a RocksDB column family metadata pointer.
+///
+/// This struct provides lazy access to column family metadata fields,
+/// including per-level and per-file metadata. The metadata is fetched
+/// from RocksDB only when the corresponding accessor method is called.
+///
+/// The lifetime `'a` is tied to the database from which this metadata was obtained,
+/// ensuring the metadata reference does not outlive the database.
+pub struct ColumnFamilyMetaDataRef<'a> {
+    ptr: *mut ffi::rocksdb_column_family_metadata_t,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl ColumnFamilyMetaDataRef<'_> {
+    /// Returns the size of this column family in bytes.
+    pub fn size(&self) -> u64 {
+        unsafe { ffi::rocksdb_column_family_metadata_get_size(self.ptr) }
+    }
+
+    /// Returns the name of the column family.
+    pub fn name(&self) -> String {
+        unsafe { from_cstr_and_free(ffi::rocksdb_column_family_metadata_get_name(self.ptr)) }
+    }
+
+    /// Returns the number of files in this column family.
+    pub fn file_count(&self) -> usize {
+        unsafe { ffi::rocksdb_column_family_metadata_get_file_count(self.ptr) }
+    }
+
+    /// Returns the number of levels in this column family.
+    pub fn level_count(&self) -> usize {
+        unsafe { ffi::rocksdb_column_family_metadata_get_level_count(self.ptr) }
+    }
+
+    /// Returns the metadata for the level at the given index.
+    ///
+    /// Returns `None` if the index is out of bounds.
+    pub fn level(&self, index: usize) -> Option<LevelMetaDataRef<'_>> {
+        unsafe {
+            let level_ptr = ffi::rocksdb_column_family_metadata_get_level_metadata(self.ptr, index);
+            if level_ptr.is_null() {
+                None
+            } else {
+                Some(LevelMetaDataRef {
+                    ptr: level_ptr,
+                    _marker: std::marker::PhantomData,
+                })
+            }
+        }
+    }
+
+    /// Returns an iterator over all levels in this column family.
+    pub fn levels(&self) -> impl Iterator<Item = LevelMetaDataRef<'_>> {
+        let count = self.level_count();
+        (0..count).filter_map(move |i| self.level(i))
+    }
+}
+
+impl Drop for ColumnFamilyMetaDataRef<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::rocksdb_column_family_metadata_destroy(self.ptr);
+        }
+    }
 }
 
 /// The metadata that describes a SST file
