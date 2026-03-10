@@ -44,6 +44,7 @@ use crate::{
     },
     slice_transform::SliceTransform,
     statistics::Ticker,
+    table_properties::TableProperties,
 };
 
 // must be Send and Sync because it will be called by RocksDB from different threads
@@ -4430,6 +4431,38 @@ impl ReadOptions {
         self.iter_start_ts = ts;
         unsafe {
             ffi::rocksdb_readoptions_set_iter_start_ts(self.inner, ptr, len);
+        }
+    }
+
+    /// Sets a table filter callback that is invoked for each SST file during
+    /// iteration. Return `false` to skip scanning a table entirely. This only
+    /// affects iterators, not point lookups.
+    pub fn set_table_filter<F>(&mut self, filter: F)
+    where
+        F: Fn(&TableProperties) -> bool + Send + Sync + 'static,
+    {
+        type FilterFn = Box<dyn Fn(&TableProperties) -> bool + Send + Sync>;
+
+        unsafe extern "C" fn call(
+            state: *mut c_void,
+            props: *const ffi::rocksdb_table_properties_t,
+        ) -> c_uchar {
+            let filter = unsafe { &**(state as *const FilterFn) };
+            let props = unsafe { TableProperties::from_raw(props) };
+            c_uchar::from(filter(&props))
+        }
+
+        unsafe extern "C" fn destroy(state: *mut c_void) {
+            drop(unsafe { Box::from_raw(state as *mut FilterFn) });
+        }
+
+        // Double-box: the outer Box<FilterFn> gives us a thin pointer we
+        // can round-trip through *mut c_void in the C callbacks.
+        let boxed: Box<FilterFn> = Box::new(Box::new(filter));
+        let state = Box::into_raw(boxed) as *mut c_void;
+
+        unsafe {
+            ffi::rocksdb_readoptions_set_table_filter(self.inner, state, Some(call), Some(destroy));
         }
     }
 }
