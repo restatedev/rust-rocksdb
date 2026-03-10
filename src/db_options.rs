@@ -24,6 +24,7 @@ use crate::cache::Cache;
 use crate::column_family::ColumnFamilyTtl;
 use crate::event_listener::{EventListener, new_event_listener};
 use crate::ffi_util::from_cstr_and_free;
+use crate::rate_limiter::RateLimiter;
 use crate::sst_file_manager::SstFileManager;
 use crate::statistics::{Histogram, HistogramData, StatsLevel};
 use crate::write_buffer_manager::WriteBufferManager;
@@ -67,6 +68,7 @@ pub(crate) struct OptionsMustOutliveDB {
     block_based: Option<BlockBasedOptionsMustOutliveDB>,
     write_buffer_manager: Option<WriteBufferManager>,
     sst_file_manager: Option<SstFileManager>,
+    rate_limiter: Option<RateLimiter>,
     log_callback: Option<Arc<LogCallback>>,
     comparator: Option<Arc<OwnedComparator>>,
     compaction_filter: Option<Arc<OwnedCompactionFilter>>,
@@ -84,6 +86,7 @@ impl OptionsMustOutliveDB {
                 .as_ref()
                 .map(BlockBasedOptionsMustOutliveDB::clone),
             write_buffer_manager: self.write_buffer_manager.clone(),
+            rate_limiter: self.rate_limiter.clone(),
             sst_file_manager: self.sst_file_manager.clone(),
             log_callback: self.log_callback.clone(),
             comparator: self.comparator.clone(),
@@ -3517,6 +3520,33 @@ impl Options {
             ffi::rocksdb_options_set_ratelimiter(self.inner, ratelimiter);
             ffi::rocksdb_ratelimiter_destroy(ratelimiter);
         }
+    }
+
+    /// Sets a shared rate limiter that can be used across multiple DB instances.
+    ///
+    /// Unlike [`set_ratelimiter`](Options::set_ratelimiter) and similar methods
+    /// that create and immediately consume a rate limiter, this method accepts a
+    /// pre-created [`RateLimiter`] that can be cloned and shared across multiple
+    /// `Options` / DB instances to enforce a single global rate limit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_rocksdb::{Options, RateLimiter, RateLimiterMode};
+    ///
+    /// let limiter = RateLimiter::new(10 * 1024 * 1024, 100_000, 10, RateLimiterMode::KAllIo, false);
+    ///
+    /// let mut opts1 = Options::default();
+    /// opts1.set_shared_ratelimiter(&limiter);
+    ///
+    /// let mut opts2 = Options::default();
+    /// opts2.set_shared_ratelimiter(&limiter);
+    /// ```
+    pub fn set_shared_ratelimiter(&mut self, limiter: &RateLimiter) {
+        unsafe {
+            ffi::rocksdb_options_set_ratelimiter(self.inner, limiter.0.inner.as_ptr());
+        }
+        self.outlive.rate_limiter = Some(limiter.clone());
     }
 
     /// Sets the maximal size of the info log file.
