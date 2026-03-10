@@ -297,3 +297,31 @@ where
         collector.need_compact()
     }
 }
+
+/// Borrowed reference to a table's properties, valid for the duration of a filter callback.
+///
+/// Provides access to user-collected properties set by a [`TablePropertiesCollector`].
+pub struct TableProperties {
+    raw: *const ffi::rocksdb_table_properties_t,
+}
+
+impl TableProperties {
+    /// Wraps a raw pointer for the duration of a callback. The caller must ensure
+    /// the pointer remains valid for the lifetime of the returned value.
+    pub(crate) unsafe fn from_raw(raw: *const ffi::rocksdb_table_properties_t) -> Self {
+        Self { raw }
+    }
+
+    /// Returns the value of a user-collected property by key, or `None` if it doesn't exist.
+    pub fn get_user_collected_property(&self, key: &CStr) -> Option<&CStr> {
+        unsafe {
+            let val =
+                ffi::rocksdb_table_properties_get_user_collected_property(self.raw, key.as_ptr());
+            if val.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(val))
+            }
+        }
+    }
+}
