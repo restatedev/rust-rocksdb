@@ -22,13 +22,12 @@ use std::{sync::Arc, thread, time::Duration};
 
 use rust_rocksdb::statistics::{Histogram, StatsLevel, Ticker};
 use rust_rocksdb::{
-    BlockBasedOptions, BottommostLevelCompaction, Cache, ColumnFamilyDescriptor,
-    ColumnFamilyMetaData, ColumnFamilyTtl, CompactOptions, CuckooTableOptions, DB, DBAccess,
-    DBCompactionStyle, DBWithThreadMode, DEFAULT_COLUMN_FAMILY_NAME, Env, Error, ErrorKind,
-    FifoCompactOptions, IteratorMode, MultiThreaded, Options, PerfContext, PerfMetric,
-    RateLimiterMode, ReadOptions, SingleThreaded, SliceTransform, Snapshot,
-    UniversalCompactOptions, UniversalCompactionStopStyle, WaitForCompactOptions, WriteBatch,
-    perf::get_memory_usage_stats,
+    BlockBasedOptions, BottommostLevelCompaction, Cache, ColumnFamilyDescriptor, ColumnFamilyTtl,
+    CompactOptions, CuckooTableOptions, DB, DBAccess, DBCompactionStyle, DBWithThreadMode,
+    DEFAULT_COLUMN_FAMILY_NAME, Env, Error, ErrorKind, FifoCompactOptions, IteratorMode,
+    MultiThreaded, Options, PerfContext, PerfMetric, RateLimiter, RateLimiterMode, ReadOptions,
+    SingleThreaded, SliceTransform, Snapshot, UniversalCompactOptions,
+    UniversalCompactionStopStyle, WaitForCompactOptions, WriteBatch, perf::get_memory_usage_stats,
 };
 use util::{DBPath, U64Comparator, U64Timestamp, assert_iter, pair};
 
@@ -1964,4 +1963,41 @@ fn test_enable_and_disable_file_deletions() {
 
         let _ = DB::destroy(&Options::default(), &path);
     }
+}
+
+#[test]
+fn shared_ratelimiter_test() {
+    let path1 = DBPath::new("_rust_rocksdb_shared_ratelimiter_1");
+    let path2 = DBPath::new("_rust_rocksdb_shared_ratelimiter_2");
+
+    // Create a single shared rate limiter.
+    let limiter = RateLimiter::new(10_000_000, 100_000, 10, RateLimiterMode::KAllIo, false);
+
+    // Open two DBs sharing the same rate limiter.
+    let mut opts1 = Options::default();
+    opts1.create_if_missing(true);
+    opts1.set_shared_ratelimiter(&limiter);
+
+    let mut opts2 = Options::default();
+    opts2.create_if_missing(true);
+    opts2.set_shared_ratelimiter(&limiter);
+
+    let db1 = DB::open(&opts1, &path1).unwrap();
+    let db2 = DB::open(&opts2, &path2).unwrap();
+
+    // Write to both DBs.
+    for i in 0..100 {
+        let key = format!("key{i}");
+        let val = format!("val{i}");
+        db1.put(key.as_bytes(), val.as_bytes()).unwrap();
+        db2.put(key.as_bytes(), val.as_bytes()).unwrap();
+    }
+
+    // Verify reads work.
+    assert_eq!(db1.get(b"key0").unwrap().unwrap(), b"val0");
+    assert_eq!(db2.get(b"key99").unwrap().unwrap(), b"val99");
+
+    // Drop DBs before Options (Options outlive DB is enforced by the wrapper).
+    drop(db1);
+    drop(db2);
 }
