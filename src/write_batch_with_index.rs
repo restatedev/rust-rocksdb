@@ -4,6 +4,8 @@ use crate::{
     Options, ReadOptions, ThreadMode, ffi,
 };
 use libc::{c_char, c_uchar, size_t};
+use smallvec::SmallVec;
+use std::io::IoSlice;
 
 pub struct WriteBatchWithIndex {
     pub(crate) inner: *mut ffi::rocksdb_writebatch_wi_t,
@@ -336,6 +338,62 @@ impl WriteBatchWithIndex {
         }
     }
 
+    /// Insert a value into the database using vectored I/O from multiple memory segments.
+    /// Avoids user-side copying when data spans multiple slices, though RocksDB still copies internally.
+    pub fn put_vectored(&mut self, key: &[IoSlice<'_>], value: &[IoSlice<'_>]) {
+        const INLINE: usize = 16;
+        let key_ptrs: SmallVec<[*const c_char; INLINE]> =
+            key.iter().map(|s| s.as_ptr() as *const c_char).collect();
+        let key_lens: SmallVec<[size_t; INLINE]> = key.iter().map(|s| s.len()).collect();
+
+        let value_ptrs: SmallVec<[*const c_char; INLINE]> =
+            value.iter().map(|s| s.as_ptr() as *const c_char).collect();
+        let value_lens: SmallVec<[size_t; INLINE]> = value.iter().map(|s| s.len()).collect();
+
+        unsafe {
+            ffi::rocksdb_writebatch_wi_putv(
+                self.inner,
+                key.len() as libc::c_int,
+                key_ptrs.as_ptr(),
+                key_lens.as_ptr(),
+                value.len() as libc::c_int,
+                value_ptrs.as_ptr(),
+                value_lens.as_ptr(),
+            );
+        }
+    }
+
+    /// Insert a value into a column family using vectored I/O from multiple memory segments.
+    /// Avoids user-side copying when data spans multiple slices, though RocksDB still copies internally.
+    pub fn put_cf_vectored(
+        &mut self,
+        cf: &impl AsColumnFamilyRef,
+        key: &[IoSlice<'_>],
+        value: &[IoSlice<'_>],
+    ) {
+        const INLINE: usize = 16;
+        let key_ptrs: SmallVec<[*const c_char; INLINE]> =
+            key.iter().map(|s| s.as_ptr() as *const c_char).collect();
+        let key_lens: SmallVec<[size_t; INLINE]> = key.iter().map(|s| s.len()).collect();
+
+        let value_ptrs: SmallVec<[*const c_char; INLINE]> =
+            value.iter().map(|s| s.as_ptr() as *const c_char).collect();
+        let value_lens: SmallVec<[size_t; INLINE]> = value.iter().map(|s| s.len()).collect();
+
+        unsafe {
+            ffi::rocksdb_writebatch_wi_putv_cf(
+                self.inner,
+                cf.inner(),
+                key.len() as libc::c_int,
+                key_ptrs.as_ptr(),
+                key_lens.as_ptr(),
+                value.len() as libc::c_int,
+                value_ptrs.as_ptr(),
+                value_lens.as_ptr(),
+            );
+        }
+    }
+
     pub fn merge<K, V>(&mut self, key: K, value: V)
     where
         K: AsRef<[u8]>,
@@ -371,6 +429,62 @@ impl WriteBatchWithIndex {
                 key.len() as size_t,
                 value.as_ptr() as *const c_char,
                 value.len() as size_t,
+            );
+        }
+    }
+
+    /// Merge a value into the database using vectored I/O from multiple memory segments.
+    /// Avoids user-side copying when data spans multiple slices, though RocksDB still copies internally.
+    pub fn merge_vectored(&mut self, key: &[IoSlice<'_>], value: &[IoSlice<'_>]) {
+        const INLINE: usize = 16;
+        let key_ptrs: SmallVec<[*const c_char; INLINE]> =
+            key.iter().map(|s| s.as_ptr() as *const c_char).collect();
+        let key_lens: SmallVec<[size_t; INLINE]> = key.iter().map(|s| s.len()).collect();
+
+        let value_ptrs: SmallVec<[*const c_char; INLINE]> =
+            value.iter().map(|s| s.as_ptr() as *const c_char).collect();
+        let value_lens: SmallVec<[size_t; INLINE]> = value.iter().map(|s| s.len()).collect();
+
+        unsafe {
+            ffi::rocksdb_writebatch_wi_mergev(
+                self.inner,
+                key.len() as libc::c_int,
+                key_ptrs.as_ptr(),
+                key_lens.as_ptr(),
+                value.len() as libc::c_int,
+                value_ptrs.as_ptr(),
+                value_lens.as_ptr(),
+            );
+        }
+    }
+
+    /// Merge a value into a column family using vectored I/O from multiple memory segments.
+    /// Avoids user-side copying when data spans multiple slices, though RocksDB still copies internally.
+    pub fn merge_cf_vectored(
+        &mut self,
+        cf: &impl AsColumnFamilyRef,
+        key: &[IoSlice<'_>],
+        value: &[IoSlice<'_>],
+    ) {
+        const INLINE: usize = 16;
+        let key_ptrs: SmallVec<[*const c_char; INLINE]> =
+            key.iter().map(|s| s.as_ptr() as *const c_char).collect();
+        let key_lens: SmallVec<[size_t; INLINE]> = key.iter().map(|s| s.len()).collect();
+
+        let value_ptrs: SmallVec<[*const c_char; INLINE]> =
+            value.iter().map(|s| s.as_ptr() as *const c_char).collect();
+        let value_lens: SmallVec<[size_t; INLINE]> = value.iter().map(|s| s.len()).collect();
+
+        unsafe {
+            ffi::rocksdb_writebatch_wi_mergev_cf(
+                self.inner,
+                cf.inner(),
+                key.len() as libc::c_int,
+                key_ptrs.as_ptr(),
+                key_lens.as_ptr(),
+                value.len() as libc::c_int,
+                value_ptrs.as_ptr(),
+                value_lens.as_ptr(),
             );
         }
     }
