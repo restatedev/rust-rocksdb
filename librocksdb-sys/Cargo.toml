@@ -1,6 +1,6 @@
 [package]
 name = "rust-librocksdb-sys"
-version = "0.44.0+11.1.1"
+version = "0.44.1+11.1.1"
 edition = "2024"
 rust-version = "1.89.0"
 authors = [
@@ -44,6 +44,16 @@ rtti = []
 malloc-usable-size = []
 zstd-static-linking-only = []
 lto = []
+# Link RocksDB against libfolly.a + transitive deps, enabling
+# `-DUSE_FOLLY -DFOLLY_NO_CONFIG -DHAVE_CXX11_ATOMIC`.
+# The build script auto-invokes `make checkout_folly && make build_folly` in
+# the rocksdb submodule if no install is detected (first build is slow:
+# ~20-30 min, needs network and ~5GB disk). Set `FOLLY_PATH=/path/to/folly`
+# to skip the auto-build and use a prebuilt install (e.g. in CI images).
+folly = []
+# Implies `folly` and additionally enables RocksDB's coroutine-based parallel
+# multiget code paths (`-DUSE_COROUTINES`, `-fcoroutines` on GCC).
+folly-coroutines = ["folly"]
 
 [dependencies]
 libc = "0.2"

@@ -1,7 +1,7 @@
 [package]
 name = "rust-rocksdb"
 description = "Rust wrapper for Facebook's RocksDB embeddable database"
-version = "0.48.0"
+version = "0.48.1"
 edition = "2024"
 rust-version = "1.89.0"
 authors = [
@@ -37,11 +37,13 @@ zstd-static-linking-only = ["rust-librocksdb-sys/zstd-static-linking-only"]
 bindgen-runtime = ["rust-librocksdb-sys/bindgen-runtime"]
 bindgen-static = ["rust-librocksdb-sys/bindgen-static"]
 lto = ["rust-librocksdb-sys/lto"]
+folly = ["rust-librocksdb-sys/folly"]
+folly-coroutines = ["rust-librocksdb-sys/folly-coroutines"]
 raw-ptr = []
 
 [dependencies]
 libc = "0.2"
-rust-librocksdb-sys = { path = "librocksdb-sys", version = "0.44.0", default-features = false, features = [
+rust-librocksdb-sys = { path = "librocksdb-sys", version = "0.44.1", default-features = false, features = [
     "static",
 ] }
 serde = { version = "1", features = ["derive"], optional = true }
