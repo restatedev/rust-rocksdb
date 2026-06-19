@@ -24,7 +24,7 @@ use rust_rocksdb::{
     // Returned wrapped in `(bool, Option<CSlice>)` by the
     // `key_may_exist_*_pinned_value` helpers. Users who want to hold
     // onto the pinned value past the immediate call site need the name.
-    ColumnFamilyMetaData,
+    ColumnFamilyMetaDataRef,
 };
 
 #[test]
@@ -32,6 +32,6 @@ fn newly_exported_types_resolve() {
     // The use-block above is the real test; this assertion is just to
     // make the test visible in `cargo test` output so a regression is
     // obvious in CI logs.
-    let _ = std::any::type_name::<ColumnFamilyMetaData>();
+    let _ = std::any::type_name::<ColumnFamilyMetaDataRef>();
     let _ = std::any::type_name::<CSlice>();
 }
