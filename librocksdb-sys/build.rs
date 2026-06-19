@@ -383,6 +383,8 @@ mod vendor {
         // same `librocksdb.a`; the linker resolves the new symbols out of
         // the extension's `.o` and everything else out of the submodule's.
         cfg.file("c-api-extensions/c_api_extensions.cc");
+        // Restate C-API overlay (table properties, table filter, SST reader).
+        cfg.file("c-api-extensions/restate.cc");
 
         if !target.is_msvc() {
             // Force-include <cstdint>. Some translation units use uintN_t
@@ -1091,19 +1093,8 @@ mod bindings {
             .join("c-api-extensions")
             .join("c_api_extensions.h");
 
-        // restate fork additions live in the restatedev/rocksdb submodule's
-        // `include/rocksdb/restate.h` (compiled from `db/restate.cc`, which is
-        // listed in `rocksdb_lib_sources.txt`). It is a sibling of `c.h` under
-        // the rocksdb include root, so bindgen needs it as a second primary
-        // header to surface those symbols.
-        let restate_header = includes.first().map(|inc| inc.join("rocksdb").join("restate.h"));
-
         let mut builder = bindgen::Builder::default()
-            .header(header.display().to_string());
-        if let Some(restate_header) = &restate_header {
-            builder = builder.header(restate_header.display().to_string());
-        }
-        let mut builder = builder
+            .header(header.display().to_string())
             .derive_debug(false)
             // https://github.com/rust-lang-nursery/rust-bindgen/issues/550
             .blocklist_type("max_align_t")
@@ -1493,6 +1484,8 @@ mod extensions {
         }
 
         cfg.file("c-api-extensions/c_api_extensions.cc");
+        // Restate C-API overlay (table properties, table filter, SST reader).
+        cfg.file("c-api-extensions/restate.cc");
         cfg.cpp(true);
 
         // Match the vendored build's C++ standard so the extension's
