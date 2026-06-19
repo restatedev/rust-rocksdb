@@ -374,6 +374,8 @@ mod vendor {
         // same `librocksdb.a`; the linker resolves the new symbols out of
         // the extension's `.o` and everything else out of the submodule's.
         cfg.file("c-api-extensions/c_api_extensions.cc");
+        // Restate C-API overlay (table properties, table filter, SST reader).
+        cfg.file("c-api-extensions/restate.cc");
 
         if !target.is_msvc() {
             // Force-include <cstdint>. Some translation units use uintN_t
@@ -1472,6 +1474,8 @@ mod extensions {
         }
 
         cfg.file("c-api-extensions/c_api_extensions.cc");
+        // Restate C-API overlay (table properties, table filter, SST reader).
+        cfg.file("c-api-extensions/restate.cc");
         cfg.cpp(true);
 
         // Match the vendored build's C++ standard so the extension's
