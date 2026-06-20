@@ -102,6 +102,60 @@ fn test_set_num_levels() {
 }
 
 #[test]
+fn test_set_sst_partitioner_fixed_prefix() {
+    let n = DBPath::new("_rust_rocksdb_test_set_sst_partitioner_fixed_prefix");
+    {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        // Disable automatic compaction so the only compaction is the manual
+        // one below, making the resulting file layout deterministic.
+        opts.set_disable_auto_compactions(true);
+        // Split SSTs whenever the first 4 bytes of the key change.
+        opts.set_sst_partitioner_fixed_prefix(4);
+
+        let db = DB::open(&opts, &n).unwrap();
+
+        // Four distinct 4-byte prefixes; the partitioner must force the
+        // compaction output into at least one SST file per prefix.
+        let prefixes = [b"aaaa", b"bbbb", b"cccc", b"dddd"];
+        // Write the keys across two overlapping flushes so the manual
+        // compaction has to actually rewrite (merge) the inputs rather than
+        // trivially moving a single file down a level — only a real rewrite
+        // runs the SST partitioner.
+        for round in 0..2u8 {
+            for prefix in &prefixes {
+                for i in 0..4u8 {
+                    let mut key = prefix.to_vec();
+                    key.push(i);
+                    db.put(&key, [round]).unwrap();
+                }
+            }
+            db.flush().unwrap();
+        }
+        // Compact everything into the bottom level so the partitioner runs.
+        db.compact_range(None::<&[u8]>, None::<&[u8]>);
+
+        let files = db.live_files().unwrap();
+        // No SST may span more than one prefix, so we expect at least one file
+        // per distinct prefix.
+        assert!(
+            files.len() >= prefixes.len(),
+            "expected at least {} SST files (one per prefix), got {}",
+            prefixes.len(),
+            files.len()
+        );
+        // Verify no file's key range straddles two prefixes.
+        for f in &files {
+            assert_eq!(
+                &f.start_key.as_ref().unwrap()[..4],
+                &f.end_key.as_ref().unwrap()[..4],
+                "SST file spans more than one 4-byte prefix"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_increase_parallelism() {
     let n = DBPath::new("_rust_rocksdb_test_increase_parallelism");
     {

@@ -2582,6 +2582,40 @@ impl Options {
         }
     }
 
+    /// Installs a fixed-prefix SST partitioner.
+    ///
+    /// During compaction the output is split into separate SST files whenever
+    /// the first `prefix_len` bytes of the user key change, so no SST spans more
+    /// than one prefix. This keeps SST boundaries aligned with prefix boundaries,
+    /// which lowers write amplification when files are promoted to higher levels
+    /// and enables trivial moves to be performed per prefix.
+    ///
+    /// If a key is shorter than `prefix_len` its whole length is used as the
+    /// prefix.
+    ///
+    /// See the [SST Partitioner](https://github.com/facebook/rocksdb/wiki/SST-Partitioner)
+    /// wiki page for details.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_rocksdb::Options;
+    ///
+    /// let mut opts = Options::default();
+    /// // Split SSTs on every distinct 8-byte key prefix.
+    /// opts.set_sst_partitioner_fixed_prefix(8);
+    /// ```
+    pub fn set_sst_partitioner_fixed_prefix(&mut self, prefix_len: usize) {
+        unsafe {
+            // `rocksdb_options_set_sst_partitioner_factory` copies the factory's
+            // internal `shared_ptr` into the options, so the wrapper object can be
+            // destroyed immediately after; the options retains its own reference.
+            let factory = ffi::rocksdb_sst_partitioner_fixed_prefix_factory_create(prefix_len);
+            ffi::rocksdb_options_set_sst_partitioner_factory(self.inner, factory);
+            ffi::rocksdb_sst_partitioner_factory_destroy(factory);
+        }
+    }
+
     /// Sets unordered_write to true trades higher write throughput with
     /// relaxing the immutability guarantee of snapshots. This violates the
     /// repeatability one expects from ::Get from a snapshot, as well as
