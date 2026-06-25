@@ -355,3 +355,46 @@ fn test_write_batch_with_rollback_to_savepoint() {
         assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v2");
     }
 }
+
+#[test]
+fn test_write_batch_single_delete() {
+    let path = DBPath::new("_rust_rocksdb_writebatch_single_delete");
+    {
+        let db = DB::open_default(&path).unwrap();
+
+        db.put(b"k1", b"v1").unwrap();
+        db.put(b"k2", b"v2").unwrap();
+
+        let mut batch = WriteBatch::default();
+        batch.single_delete(b"k1");
+        db.write(&batch).unwrap();
+
+        assert!(db.get(b"k1").unwrap().is_none());
+        assert_eq!(db.get(b"k2").unwrap().unwrap(), b"v2");
+    }
+}
+
+#[test]
+fn test_write_batch_single_delete_cf() {
+    let path = DBPath::new("_rust_rocksdb_writebatch_single_delete_cf");
+    {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+
+        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let db = DB::open_cf_descriptors(&opts, &path, vec![cf_descriptor]).unwrap();
+
+        let cf = db.cf_handle("test_cf").unwrap();
+
+        db.put_cf(&cf, b"k1", b"v1").unwrap();
+        db.put_cf(&cf, b"k2", b"v2").unwrap();
+
+        let mut batch = WriteBatch::default();
+        batch.single_delete_cf(&cf, b"k1");
+        db.write(&batch).unwrap();
+
+        assert!(db.get_cf(&cf, b"k1").unwrap().is_none());
+        assert_eq!(db.get_cf(&cf, b"k2").unwrap().unwrap(), b"v2");
+    }
+}
