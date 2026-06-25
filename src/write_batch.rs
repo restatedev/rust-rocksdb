@@ -544,6 +544,33 @@ impl<const TRANSACTION: bool> WriteBatchWithTransaction<TRANSACTION> {
         }
     }
 
+    /// Remove the database entry for key. Expects that the key exists and was not overwritten.
+    /// Undefined behavior if key was written multiple times without intervening deletes.
+    pub fn single_delete<K: AsRef<[u8]>>(&mut self, key: K) {
+        let key = key.as_ref();
+
+        unsafe {
+            ffi::rocksdb_writebatch_singledelete(
+                self.inner,
+                key.as_ptr() as *const c_char,
+                key.len() as size_t,
+            );
+        }
+    }
+
+    pub fn single_delete_cf<K: AsRef<[u8]>>(&mut self, cf: &impl AsColumnFamilyRef, key: K) {
+        let key = key.as_ref();
+
+        unsafe {
+            ffi::rocksdb_writebatch_singledelete_cf(
+                self.inner,
+                cf.inner(),
+                key.as_ptr() as *const c_char,
+                key.len() as size_t,
+            );
+        }
+    }
+
     // Append a blob of arbitrary size to the records in this batch. The blob will
     // be stored in the transaction log but not in any other file. In particular,
     // it will not be persisted to the SST files. When iterating over this
