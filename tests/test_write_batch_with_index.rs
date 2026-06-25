@@ -270,3 +270,74 @@ fn test_wbwi_merge_cf_vectored() {
         );
     }
 }
+
+#[test]
+fn test_wbwi_single_delete() {
+    let path = DBPath::new("_rust_rocksdb_wbwi_single_delete");
+    {
+        let db = DB::open_default(&path).unwrap();
+
+        db.put(b"k1", b"v1").unwrap();
+        db.put(b"k2", b"v2").unwrap();
+
+        let mut wbwi = WriteBatchWithIndex::new(0, true);
+        wbwi.single_delete(b"k1");
+
+        let readopts = ReadOptions::default();
+        assert!(
+            wbwi.get_from_batch_and_db(&db, b"k1", &readopts)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            wbwi.get_from_batch_and_db(&db, b"k2", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v2"
+        );
+
+        db.write_wbwi(&wbwi).unwrap();
+
+        assert!(db.get(b"k1").unwrap().is_none());
+        assert_eq!(db.get(b"k2").unwrap().unwrap(), b"v2");
+    }
+}
+
+#[test]
+fn test_wbwi_single_delete_cf() {
+    let path = DBPath::new("_rust_rocksdb_wbwi_single_delete_cf");
+    {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+
+        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let db = DB::open_cf_descriptors(&opts, &path, vec![cf_descriptor]).unwrap();
+
+        let cf = db.cf_handle("test_cf").unwrap();
+
+        db.put_cf(&cf, b"k1", b"v1").unwrap();
+        db.put_cf(&cf, b"k2", b"v2").unwrap();
+
+        let mut wbwi = WriteBatchWithIndex::new(0, true);
+        wbwi.single_delete_cf(&cf, b"k1");
+
+        let readopts = ReadOptions::default();
+        assert!(
+            wbwi.get_from_batch_and_db_cf(&db, &cf, b"k1", &readopts)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            wbwi.get_from_batch_and_db_cf(&db, &cf, b"k2", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v2"
+        );
+
+        db.write_wbwi(&wbwi).unwrap();
+
+        assert!(db.get_cf(&cf, b"k1").unwrap().is_none());
+        assert_eq!(db.get_cf(&cf, b"k2").unwrap().unwrap(), b"v2");
+    }
+}
