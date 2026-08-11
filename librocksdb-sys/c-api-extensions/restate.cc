@@ -20,9 +20,11 @@
 #include <vector>
 
 #include "rocksdb/db.h"
+#include "rocksdb/env.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/options.h"
+#include "rocksdb/rate_limiter.h"
 #include "rocksdb/sst_file_reader.h"
 #include "rocksdb/status.h"
 #include "rocksdb/table_properties.h"
@@ -31,10 +33,12 @@
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::DB;
 using ROCKSDB_NAMESPACE::EntryType;
+using ROCKSDB_NAMESPACE::Env;
 using ROCKSDB_NAMESPACE::FlushJobInfo;
 using ROCKSDB_NAMESPACE::Iterator;
 using ROCKSDB_NAMESPACE::Options;
 using ROCKSDB_NAMESPACE::Range;
+using ROCKSDB_NAMESPACE::RateLimiter;
 using ROCKSDB_NAMESPACE::ReadOptions;
 using ROCKSDB_NAMESPACE::SequenceNumber;
 using ROCKSDB_NAMESPACE::Slice;
@@ -91,6 +95,16 @@ inline const ReadOptions* as_readoptions(const rocksdb_readoptions_t* h) {
 
 inline const FlushJobInfo* as_flushjobinfo(const rocksdb_flushjobinfo_t* h) {
   return reinterpret_cast<const FlushJobInfo*>(h);
+}
+
+// `rocksdb_ratelimiter_t` is defined in the submodule's db/c.cc as
+// `{ std::shared_ptr<RateLimiter> rep; }`, with `rep` as the first (and only)
+// member. As with the handles above we do not redefine the struct (ODR);
+// instead we read the shared_ptr back through the opaque pointer and return the
+// underlying limiter. A layout change that inserted a field before `rep` would
+// break this, matching the other accessors here.
+inline RateLimiter* as_ratelimiter(rocksdb_ratelimiter_t* h) {
+  return reinterpret_cast<std::shared_ptr<RateLimiter>*>(h)->get();
 }
 
 }  // namespace
@@ -794,6 +808,43 @@ rocksdb_iterator_t* rocksdb_sstfilereader_new_iterator(
   auto* holder = new iterator_holder{
       reader->rep->NewIterator(*as_readoptions(options))};
   return reinterpret_cast<rocksdb_iterator_t*>(holder);
+}
+
+/* ============================================================================
+ * RateLimiter statistics
+ * ============================================================================
+ */
+
+int64_t rocksdb_ratelimiter_get_bytes_per_second(
+    rocksdb_ratelimiter_t* limiter) {
+  return as_ratelimiter(limiter)->GetBytesPerSecond();
+}
+
+int64_t rocksdb_ratelimiter_get_total_bytes_through(
+    rocksdb_ratelimiter_t* limiter, int priority) {
+  return as_ratelimiter(limiter)->GetTotalBytesThrough(
+      static_cast<Env::IOPriority>(priority));
+}
+
+int64_t rocksdb_ratelimiter_get_total_requests(rocksdb_ratelimiter_t* limiter,
+                                               int priority) {
+  return as_ratelimiter(limiter)->GetTotalRequests(
+      static_cast<Env::IOPriority>(priority));
+}
+
+unsigned char rocksdb_ratelimiter_get_total_pending_requests(
+    rocksdb_ratelimiter_t* limiter, int priority, int64_t* out_pending) {
+  int64_t pending = 0;
+  Status s = as_ratelimiter(limiter)->GetTotalPendingRequests(
+      &pending, static_cast<Env::IOPriority>(priority));
+  // Any non-OK status (NotSupported for limiters that don't track this, or
+  // otherwise) leaves *out_pending untouched so callers report an absent
+  // metric rather than a misleading zero.
+  if (!s.ok()) {
+    return 0;
+  }
+  *out_pending = pending;
+  return 1;
 }
 
 }  // extern "C"

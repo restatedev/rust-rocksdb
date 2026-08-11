@@ -308,6 +308,40 @@ extern ROCKSDB_LIBRARY_API rocksdb_iterator_t*
 rocksdb_sstfilereader_new_iterator(rocksdb_sstfilereader_t* reader,
                                    const rocksdb_readoptions_t* options);
 
+/* ============================================================================
+ * RateLimiter statistics
+ *
+ * Read-only accessors over the C++ RateLimiter returned by
+ * rocksdb_ratelimiter_create_with_mode. The `priority` argument takes the
+ * numeric values of rocksdb's Env::IOPriority (IO_LOW = 0, IO_HIGH = 2,
+ * IO_USER = 3, IO_TOTAL = 4). These let callers observe the live auto-tuned
+ * write rate and per-priority throughput of the shared background-I/O limiter.
+ * ============================================================================
+ */
+
+/* The current (possibly auto-tuned) write rate ceiling, in bytes per second. */
+extern ROCKSDB_LIBRARY_API int64_t
+rocksdb_ratelimiter_get_bytes_per_second(rocksdb_ratelimiter_t* limiter);
+
+/* Cumulative bytes admitted by the limiter for the given IOPriority. This
+ * counts bytes granted by the limiter, not bytes physically written. */
+extern ROCKSDB_LIBRARY_API int64_t rocksdb_ratelimiter_get_total_bytes_through(
+    rocksdb_ratelimiter_t* limiter, int priority);
+
+/* Cumulative number of requests that passed through the limiter for the given
+ * IOPriority. */
+extern ROCKSDB_LIBRARY_API int64_t rocksdb_ratelimiter_get_total_requests(
+    rocksdb_ratelimiter_t* limiter, int priority);
+
+/* Number of requests currently pending (waiting for tokens) for the given
+ * IOPriority. Not every RateLimiter implementation supports this: returns 1 and
+ * writes the count into *out_pending on success, or returns 0 (leaving *out_pending
+ * untouched) when the limiter reports Status::NotSupported. */
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_ratelimiter_get_total_pending_requests(rocksdb_ratelimiter_t* limiter,
+                                               int priority,
+                                               int64_t* out_pending);
+
 #ifdef __cplusplus
 }
 #endif

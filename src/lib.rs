@@ -145,7 +145,7 @@ pub use crate::{
     iter_range::{IterateBounds, PrefixRange},
     merge_operator::MergeOperands,
     perf::{PerfContext, PerfMetric, PerfStatsLevel},
-    rate_limiter::RateLimiter,
+    rate_limiter::{IoPriority, RateLimiter},
     slice_transform::SliceTransform,
     snapshot::{Snapshot, SnapshotWithThreadMode},
     sst_file_manager::SstFileManager,

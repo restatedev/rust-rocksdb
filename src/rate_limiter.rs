@@ -19,6 +19,21 @@ impl Drop for RateLimiterWrapper {
     }
 }
 
+/// I/O priority for rate-limiter statistics, mirroring rocksdb's
+/// `Env::IOPriority`. Compaction output is normally scheduled at
+/// [`IoPriority::Low`] and flush output at [`IoPriority::High`], but when the
+/// write controller is stalling or stopping writes, both are submitted at
+/// [`IoPriority::User`] so they can drain the backlog faster.
+/// [`IoPriority::Total`] aggregates across all priorities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum IoPriority {
+    Low = 0,
+    High = 2,
+    User = 3,
+    Total = 4,
+}
+
 /// A `RateLimiter` can be shared across multiple DB instances to control the
 /// total write rate of flush and compaction.
 ///
@@ -83,5 +98,49 @@ impl RateLimiter {
         })
         .unwrap();
         RateLimiter(Arc::new(RateLimiterWrapper { inner }))
+    }
+
+    /// The current write rate ceiling in bytes per second. When the limiter was
+    /// created with `auto_tuned = true`, this reflects the live auto-tuned value
+    /// rather than the configured maximum.
+    pub fn bytes_per_second(&self) -> i64 {
+        unsafe { ffi::rocksdb_ratelimiter_get_bytes_per_second(self.0.inner.as_ptr()) }
+    }
+
+    /// Cumulative bytes admitted (granted) by the limiter for the given
+    /// priority. This counts bytes the limiter allowed through, not bytes
+    /// physically written to disk.
+    pub fn total_bytes_through(&self, priority: IoPriority) -> i64 {
+        unsafe {
+            ffi::rocksdb_ratelimiter_get_total_bytes_through(
+                self.0.inner.as_ptr(),
+                priority as c_int,
+            )
+        }
+    }
+
+    /// Cumulative number of requests that passed through the limiter for the
+    /// given priority.
+    pub fn total_requests(&self, priority: IoPriority) -> i64 {
+        unsafe {
+            ffi::rocksdb_ratelimiter_get_total_requests(self.0.inner.as_ptr(), priority as c_int)
+        }
+    }
+
+    /// Number of requests currently waiting for tokens at the given priority.
+    ///
+    /// Returns `None` when the underlying limiter does not support this query
+    /// (rocksdb reports `Status::NotSupported`), so callers can distinguish
+    /// "unsupported" from a genuine zero.
+    pub fn total_pending_requests(&self, priority: IoPriority) -> Option<i64> {
+        let mut pending: i64 = 0;
+        let supported = unsafe {
+            ffi::rocksdb_ratelimiter_get_total_pending_requests(
+                self.0.inner.as_ptr(),
+                priority as c_int,
+                &mut pending,
+            )
+        };
+        (supported != 0).then_some(pending)
     }
 }
