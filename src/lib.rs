@@ -107,6 +107,7 @@ mod slice_transform;
 mod snapshot;
 pub mod sst_file_manager;
 mod sst_file_writer;
+pub mod sst_partitioner;
 pub mod statistics;
 pub mod table_properties;
 mod transactions;

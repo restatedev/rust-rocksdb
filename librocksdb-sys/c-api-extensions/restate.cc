@@ -24,6 +24,7 @@
 #include "rocksdb/listener.h"
 #include "rocksdb/options.h"
 #include "rocksdb/sst_file_reader.h"
+#include "rocksdb/sst_partitioner.h"
 #include "rocksdb/status.h"
 #include "rocksdb/table_properties.h"
 #include "rocksdb/types.h"
@@ -38,7 +39,11 @@ using ROCKSDB_NAMESPACE::Range;
 using ROCKSDB_NAMESPACE::ReadOptions;
 using ROCKSDB_NAMESPACE::SequenceNumber;
 using ROCKSDB_NAMESPACE::Slice;
+using ROCKSDB_NAMESPACE::PartitionerRequest;
+using ROCKSDB_NAMESPACE::PartitionerResult;
 using ROCKSDB_NAMESPACE::SstFileReader;
+using ROCKSDB_NAMESPACE::SstPartitioner;
+using ROCKSDB_NAMESPACE::SstPartitionerFactory;
 using ROCKSDB_NAMESPACE::Status;
 using ROCKSDB_NAMESPACE::TableProperties;
 using ROCKSDB_NAMESPACE::TablePropertiesCollection;
@@ -264,6 +269,103 @@ struct restate_table_properties_collector_factory_t
     rocksdb_table_properties_collector_context_t cb_context;
     cb_context.rep = &context;
     return (*create_table_properties_collector_)(state_, &cb_context);
+  }
+
+  const char* Name() const override { return (*name_)(state_); }
+};
+
+/* ============================================================================
+ * SST Partitioner - struct definitions
+ * ============================================================================
+ */
+
+struct rocksdb_sst_partitioner_context_t {
+  const SstPartitioner::Context* rep;
+};
+
+struct rocksdb_sst_partitioner_t : public SstPartitioner {
+  void* state_;
+  void (*destructor_)(void*);
+  int (*should_partition_)(void*, const char* prev_user_key,
+                           size_t prev_user_key_len,
+                           const char* current_user_key,
+                           size_t current_user_key_len,
+                           uint64_t current_output_file_size);
+  bool (*can_do_trivial_move_)(void*, const char* smallest_user_key,
+                               size_t smallest_user_key_len,
+                               const char* largest_user_key,
+                               size_t largest_user_key_len);
+  const char* (*name_)(void*);
+
+  rocksdb_sst_partitioner_t(
+      void* state, void (*destructor)(void*),
+      int (*should_partition)(void*, const char* prev_user_key,
+                              size_t prev_user_key_len,
+                              const char* current_user_key,
+                              size_t current_user_key_len,
+                              uint64_t current_output_file_size),
+      bool (*can_do_trivial_move)(void*, const char* smallest_user_key,
+                                  size_t smallest_user_key_len,
+                                  const char* largest_user_key,
+                                  size_t largest_user_key_len),
+      const char* (*name)(void*)) {
+    this->state_ = state;
+    this->destructor_ = destructor;
+    this->should_partition_ = should_partition;
+    this->can_do_trivial_move_ = can_do_trivial_move;
+    this->name_ = name;
+  }
+
+  ~rocksdb_sst_partitioner_t() override { (*destructor_)(state_); }
+
+  const char* Name() const override { return (*name_)(state_); }
+
+  PartitionerResult ShouldPartition(const PartitionerRequest& request) override {
+    int result = (*should_partition_)(
+        state_, request.prev_user_key->data(), request.prev_user_key->size(),
+        request.current_user_key->data(), request.current_user_key->size(),
+        request.current_output_file_size);
+    return result != 0 ? ROCKSDB_NAMESPACE::kRequired
+                       : ROCKSDB_NAMESPACE::kNotRequired;
+  }
+
+  bool CanDoTrivialMove(const Slice& smallest_user_key,
+                        const Slice& largest_user_key) override {
+    return (*can_do_trivial_move_)(state_, smallest_user_key.data(),
+                                   smallest_user_key.size(),
+                                   largest_user_key.data(),
+                                   largest_user_key.size());
+  }
+};
+
+// Named restate_* (not rocksdb_*) for the same reason as the collector factory
+// above: upstream db/c.cc defines a rocksdb_sst_partitioner_factory_t and a
+// same-named struct here would be an ODR violation across TUs.
+struct restate_sst_partitioner_factory_t : public SstPartitionerFactory {
+  void* state_;
+  void (*destructor_)(void*);
+  const char* (*name_)(void*);
+  rocksdb_sst_partitioner_t* (*create_partitioner_)(
+      void*, rocksdb_sst_partitioner_context_t*);
+
+  restate_sst_partitioner_factory_t(
+      void* state, void (*destructor)(void*), const char* (*name)(void*),
+      rocksdb_sst_partitioner_t* (*create_partitioner)(
+          void*, rocksdb_sst_partitioner_context_t*)) {
+    this->state_ = state;
+    this->destructor_ = destructor;
+    this->name_ = name;
+    this->create_partitioner_ = create_partitioner;
+  }
+
+  ~restate_sst_partitioner_factory_t() override { (*destructor_)(state_); }
+
+  std::unique_ptr<SstPartitioner> CreatePartitioner(
+      const SstPartitioner::Context& context) const override {
+    rocksdb_sst_partitioner_context_t cb_context;
+    cb_context.rep = &context;
+    return std::unique_ptr<SstPartitioner>(
+        (*create_partitioner_)(state_, &cb_context));
   }
 
   const char* Name() const override { return (*name_)(state_); }
@@ -794,6 +896,64 @@ rocksdb_iterator_t* rocksdb_sstfilereader_new_iterator(
   auto* holder = new iterator_holder{
       reader->rep->NewIterator(*as_readoptions(options))};
   return reinterpret_cast<rocksdb_iterator_t*>(holder);
+}
+
+/* ============================================================================
+ * SST Partitioner implementation
+ * ============================================================================
+ */
+
+rocksdb_sst_partitioner_t* rocksdb_sst_partitioner_create(
+    void* state, void (*destructor)(void* state),
+    int (*should_partition)(void* state, const char* prev_user_key,
+                            size_t prev_user_key_len,
+                            const char* current_user_key,
+                            size_t current_user_key_len,
+                            uint64_t current_output_file_size),
+    bool (*can_do_trivial_move)(void* state, const char* smallest_user_key,
+                                size_t smallest_user_key_len,
+                                const char* largest_user_key,
+                                size_t largest_user_key_len),
+    const char* (*name)(void* state)) {
+  return new rocksdb_sst_partitioner_t(state, destructor, should_partition,
+                                       can_do_trivial_move, name);
+}
+
+void rocksdb_options_set_sst_partitioner_factory_callbacks(
+    rocksdb_options_t* options, void* state, void (*destructor)(void* state),
+    const char* (*name)(void* state),
+    rocksdb_sst_partitioner_t* (*create_partitioner)(
+        void* state, rocksdb_sst_partitioner_context_t* context)) {
+  as_options(options)->sst_partitioner_factory =
+      std::make_shared<restate_sst_partitioner_factory_t>(
+          state, destructor, name, create_partitioner);
+}
+
+bool rocksdb_sst_partitioner_context_is_full_compaction(
+    rocksdb_sst_partitioner_context_t* context) {
+  return context->rep->is_full_compaction;
+}
+
+bool rocksdb_sst_partitioner_context_is_manual_compaction(
+    rocksdb_sst_partitioner_context_t* context) {
+  return context->rep->is_manual_compaction;
+}
+
+int rocksdb_sst_partitioner_context_output_level(
+    rocksdb_sst_partitioner_context_t* context) {
+  return context->rep->output_level;
+}
+
+const char* rocksdb_sst_partitioner_context_smallest_user_key(
+    rocksdb_sst_partitioner_context_t* context, size_t* len) {
+  *len = context->rep->smallest_user_key.size();
+  return context->rep->smallest_user_key.data();
+}
+
+const char* rocksdb_sst_partitioner_context_largest_user_key(
+    rocksdb_sst_partitioner_context_t* context, size_t* len) {
+  *len = context->rep->largest_user_key.size();
+  return context->rep->largest_user_key.data();
 }
 
 }  // extern "C"

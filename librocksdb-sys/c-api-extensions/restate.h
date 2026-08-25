@@ -308,6 +308,81 @@ extern ROCKSDB_LIBRARY_API rocksdb_iterator_t*
 rocksdb_sstfilereader_new_iterator(rocksdb_sstfilereader_t* reader,
                                    const rocksdb_readoptions_t* options);
 
+/* ============================================================================
+ * SST Partitioner (callback-based)
+ * ============================================================================
+ *
+ * Upstream c.h only exposes the built-in fixed-prefix partitioner factory
+ * (rocksdb_sst_partitioner_fixed_prefix_factory_create). These callbacks let a
+ * client implement SstPartitionerFactory / SstPartitioner directly.
+ *
+ * The `_callbacks` suffix on the options setter follows the same convention as
+ * rocksdb_options_add_table_properties_collector_factory_callbacks, keeping the
+ * name clear of upstream's factory-object-based API.
+ */
+
+/* A custom SST partitioner instance. Created inside the factory's
+ * create_partitioner callback via rocksdb_sst_partitioner_create; ownership
+ * passes to RocksDB, which destroys it when the compaction is done (invoking
+ * the instance's destructor callback on its state). */
+typedef struct rocksdb_sst_partitioner_t rocksdb_sst_partitioner_t;
+
+/* Compaction context handed to the factory's create_partitioner callback.
+ * Only valid for the duration of that callback. */
+typedef struct rocksdb_sst_partitioner_context_t rocksdb_sst_partitioner_context_t;
+
+/* Creates a partitioner instance from callbacks.
+ *
+ * should_partition is called for every key during compaction; returning
+ * non-zero requests that the current output file be finished before the
+ * current key (RocksDB's kRequired), zero continues the file (kNotRequired).
+ *
+ * can_do_trivial_move is called with the smallest and largest user keys of a
+ * file when compaction considers moving it down a level without rewriting it;
+ * returning false forces a rewrite (which runs should_partition).
+ */
+extern ROCKSDB_LIBRARY_API rocksdb_sst_partitioner_t*
+rocksdb_sst_partitioner_create(
+    void* state, void (*destructor)(void* state),
+    int (*should_partition)(void* state, const char* prev_user_key,
+                            size_t prev_user_key_len,
+                            const char* current_user_key,
+                            size_t current_user_key_len,
+                            uint64_t current_output_file_size),
+    bool (*can_do_trivial_move)(void* state, const char* smallest_user_key,
+                                size_t smallest_user_key_len,
+                                const char* largest_user_key,
+                                size_t largest_user_key_len),
+    const char* (*name)(void* state));
+
+/* Installs a callback-based SstPartitionerFactory on the options.
+ *
+ * create_partitioner may return NULL to skip partitioning for that compaction.
+ * The factory's destructor callback runs when the options (and every
+ * outstanding compaction) has released the factory.
+ */
+extern ROCKSDB_LIBRARY_API void
+rocksdb_options_set_sst_partitioner_factory_callbacks(
+    rocksdb_options_t* options, void* state, void (*destructor)(void* state),
+    const char* (*name)(void* state),
+    rocksdb_sst_partitioner_t* (*create_partitioner)(
+        void* state, rocksdb_sst_partitioner_context_t* context));
+
+/* Context accessors; only valid inside the create_partitioner callback. */
+extern ROCKSDB_LIBRARY_API bool rocksdb_sst_partitioner_context_is_full_compaction(
+    rocksdb_sst_partitioner_context_t* context);
+extern ROCKSDB_LIBRARY_API bool
+rocksdb_sst_partitioner_context_is_manual_compaction(
+    rocksdb_sst_partitioner_context_t* context);
+extern ROCKSDB_LIBRARY_API int rocksdb_sst_partitioner_context_output_level(
+    rocksdb_sst_partitioner_context_t* context);
+extern ROCKSDB_LIBRARY_API const char*
+rocksdb_sst_partitioner_context_smallest_user_key(
+    rocksdb_sst_partitioner_context_t* context, size_t* len);
+extern ROCKSDB_LIBRARY_API const char*
+rocksdb_sst_partitioner_context_largest_user_key(
+    rocksdb_sst_partitioner_context_t* context, size_t* len);
+
 #ifdef __cplusplus
 }
 #endif
