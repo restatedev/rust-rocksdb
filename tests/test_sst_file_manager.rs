@@ -1,7 +1,7 @@
 mod util;
 
 use rust_rocksdb::sst_file_manager::SstFileManager;
-use rust_rocksdb::{DB, FlushOptions, Options};
+use rust_rocksdb::{DB, Env, FlushOptions, Options};
 use util::DBPath;
 
 #[test]
@@ -47,4 +47,33 @@ fn test_sst_file_manager_config_and_sizes() {
 
     // Trash size is non-negative; may be zero depending on environment.
     let _trash = sfm.get_total_trash_size();
+}
+
+#[test]
+fn test_sst_file_manager_with_custom_env() {
+    let path = DBPath::new("_rust_rocksdb_test_sst_file_manager_with_custom_env");
+
+    // Build the manager from the same non-default Env the DB runs on. The
+    // SST files only exist on the in-memory filesystem, so the manager can
+    // only account for them if it uses the provided env rather than the
+    // default one.
+    let env = Env::mem_env().unwrap();
+    let sfm = SstFileManager::new_with_env(&env);
+
+    let mut opts = Options::default();
+    opts.create_if_missing(true);
+    opts.set_env(&env);
+    opts.set_sst_file_manager(&sfm);
+
+    let db = DB::open(&opts, &path).unwrap();
+
+    for i in 0..1000u32 {
+        db.put(format!("k{:04}", i).as_bytes(), b"value").unwrap();
+    }
+    let mut fopts = FlushOptions::default();
+    fopts.set_wait(true);
+    db.flush_opt(&fopts).unwrap();
+
+    let total_size = sfm.get_total_size();
+    assert!(total_size > 0, "expected some SST size; got {}", total_size);
 }

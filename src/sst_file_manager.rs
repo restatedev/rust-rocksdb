@@ -31,9 +31,23 @@ impl SstFileManager {
     /// see [docs](https://github.com/facebook/rocksdb/wiki/SST-File-Manager) for more details.
     pub fn new() -> Self {
         let env = Env::new().expect("Could not create default Env");
+        Self::new_with_env(&env)
+    }
+
+    /// Creates a new `SstFileManager` using the given `Env`.
+    ///
+    /// The manager uses the env's filesystem for file size tracking,
+    /// free-space checks, and (trash) deletions, and its clock for deletion
+    /// rate limiting — pass the same `Env` the DB runs on (see
+    /// [`Options::set_env`](crate::Options::set_env)) so these operate on the
+    /// right filesystem.
+    pub fn new_with_env(env: &Env) -> Self {
         let inner = NonNull::new(unsafe { ffi::rocksdb_sst_file_manager_create(env.0.inner) })
             .expect("Could not create RocksDB sst file manager");
-        SstFileManager(Arc::new(SstFileManagerWrapper { inner, _env: env }))
+        SstFileManager(Arc::new(SstFileManagerWrapper {
+            inner,
+            _env: env.clone(),
+        }))
     }
 
     /// Sets the maximum allowed total SST file size in bytes.
