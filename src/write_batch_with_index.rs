@@ -1,11 +1,13 @@
 use crate::db::DBInner;
 use crate::{
     AsColumnFamilyRef, DBAccess, DBCommon, DBPinnableSlice, DBRawIteratorWithThreadMode, Error,
-    Options, ReadOptions, ThreadMode, ffi,
+    Options, ReadOptions, ThreadMode, WriteBatch, WriteBatchIterator, WriteBatchIteratorCf, ffi,
 };
 use libc::{c_char, c_uchar, size_t};
 use smallvec::SmallVec;
 use std::io::IoSlice;
+use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
 
 pub struct WriteBatchWithIndex {
     pub(crate) inner: *mut ffi::rocksdb_writebatch_wi_t,
@@ -590,7 +592,129 @@ impl WriteBatchWithIndex {
 
         DBRawIteratorWithThreadMode::from_inner(iterator, readopts)
     }
+
+    /// Mutable access to the [`WriteBatch`] that backs this index.
+    ///
+    /// This is the batch [`write_wbwi`] commits, so records appended through the returned
+    /// handle are persisted together with the indexed ones. Use it for record types
+    /// `WriteBatchWithIndex` cannot express itself (range deletions, log data, timestamped
+    /// writes); see [`UnindexedWriteBatch`] for the caveats.
+    ///
+    /// [`write_wbwi`]: crate::DBCommon::write_wbwi
+    pub fn unindexed_write_batch(&mut self) -> UnindexedWriteBatch<'_> {
+        UnindexedWriteBatch {
+            inner: unsafe { ffi::rocksdb_writebatch_wi_get_write_batch(self.inner) },
+            _wbwi: PhantomData,
+        }
+    }
 }
+
+/// A mutable, non-owning view of the [`WriteBatch`] backing a [`WriteBatchWithIndex`],
+/// obtained from [`WriteBatchWithIndex::unindexed_write_batch`].
+///
+/// Only the operations the index cannot express are offered here; everything the index
+/// does support (`put`, `merge`, `delete`, `single_delete`, savepoints, `clear`) must keep
+/// going through `WriteBatchWithIndex` so the index stays in sync with the batch.
+///
+/// # Records written here bypass the index
+///
+/// The index is not told about anything appended through this handle, so:
+///
+/// - `get_from_batch*` and `iterator_with_base*` on the parent do not see these records,
+///   only the DB does once the batch is written. A pending range deletion, for example,
+///   does not hide the keys it covers from `get_from_batch_and_db`.
+/// - The `overwrite_key` mode does not apply to them.
+/// - They still count towards [`WriteBatchWithIndex::len`] (except `put_log_data`).
+///
+/// # Range deletions and savepoints
+///
+/// [`WriteBatchWithIndex::rollback_to_savepoint`] truncates the batch to the savepoint and
+/// then rebuilds the index by replaying every record left in it. RocksDB's replay rejects
+/// range-deletion records with a `Corruption` error and leaves the index only partially
+/// rebuilt. A rollback is therefore only safe if it discards every range deletion, i.e. the
+/// savepoint was set before the first one was appended. [`WriteBatchWithIndex::clear`] is
+/// always fine.
+pub struct UnindexedWriteBatch<'a> {
+    inner: *mut ffi::rocksdb_writebatch_t,
+    _wbwi: PhantomData<&'a mut WriteBatchWithIndex>,
+}
+
+impl UnindexedWriteBatch<'_> {
+    /// Borrow the underlying batch as a [`WriteBatch`] for the duration of one call.
+    ///
+    /// The batch is owned by the parent `WriteBatchWithIndex`, hence `ManuallyDrop`: the
+    /// temporary must never run `WriteBatch`'s destructor. It is also never handed out as
+    /// `&mut WriteBatch`: safe code could `mem::swap` it with an owned batch, which would
+    /// later `rocksdb_writebatch_destroy` an object RocksDB owns.
+    fn batch(&self) -> ManuallyDrop<WriteBatch> {
+        ManuallyDrop::new(WriteBatch { inner: self.inner })
+    }
+
+    /// Iterate the put and delete operations within the batch, indexed or not.
+    /// See [`WriteBatch::iterate`].
+    ///
+    /// As with `WriteBatch::iterate`, RocksDB's C handler has no range-deletion callback, so
+    /// iteration stops silently at the first range deletion in the batch.
+    pub fn iterate<T: WriteBatchIterator>(&self, callbacks: &mut T) {
+        self.batch().iterate(callbacks);
+    }
+
+    /// Iterate the put, delete, and merge operations within the batch with column family
+    /// information, indexed or not. See [`WriteBatch::iterate_cf`].
+    ///
+    /// As with `WriteBatch::iterate_cf`, iteration stops silently at the first range
+    /// deletion in the batch.
+    pub fn iterate_cf<T: WriteBatchIteratorCf>(&self, callbacks: &mut T) {
+        self.batch().iterate_cf(callbacks);
+    }
+
+    /// Remove database entries in the range `[from, to)`. See [`WriteBatch::delete_range`].
+    ///
+    /// Not indexed; see the type-level docs, in particular the note on savepoints.
+    pub fn delete_range<K: AsRef<[u8]>>(&mut self, from: K, to: K) {
+        self.batch().delete_range(from, to);
+    }
+
+    /// Remove database entries in the range `[from, to)` of a column family.
+    /// See [`WriteBatch::delete_range_cf`].
+    ///
+    /// Not indexed; see the type-level docs, in particular the note on savepoints.
+    pub fn delete_range_cf<K: AsRef<[u8]>>(&mut self, cf: &impl AsColumnFamilyRef, from: K, to: K) {
+        self.batch().delete_range_cf(cf, from, to);
+    }
+
+    /// Append a blob to the batch that goes to the WAL only. See [`WriteBatch::put_log_data`].
+    pub fn put_log_data<V: AsRef<[u8]>>(&mut self, log_data: V) {
+        self.batch().put_log_data(log_data);
+    }
+
+    /// Insert a value with a user-defined timestamp. See [`WriteBatch::put_cf_with_ts`].
+    ///
+    /// Not indexed; see the type-level docs.
+    pub fn put_cf_with_ts<K, V, S>(&mut self, cf: &impl AsColumnFamilyRef, key: K, ts: S, value: V)
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]>,
+        S: AsRef<[u8]>,
+    {
+        self.batch().put_cf_with_ts(cf, key, ts, value);
+    }
+
+    /// Remove an entry with a user-defined timestamp. See [`WriteBatch::delete_cf_with_ts`].
+    ///
+    /// Not indexed; see the type-level docs.
+    pub fn delete_cf_with_ts<K: AsRef<[u8]>, S: AsRef<[u8]>>(
+        &mut self,
+        cf: &impl AsColumnFamilyRef,
+        key: K,
+        ts: S,
+    ) {
+        self.batch().delete_cf_with_ts(cf, key, ts);
+    }
+}
+
+// Exclusively borrows a `WriteBatchWithIndex`, which is `Send`.
+unsafe impl Send for UnindexedWriteBatch<'_> {}
 
 impl Drop for WriteBatchWithIndex {
     fn drop(&mut self) {

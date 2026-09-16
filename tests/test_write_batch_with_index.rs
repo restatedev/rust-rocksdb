@@ -1,7 +1,9 @@
 use std::io::IoSlice;
 
 use crate::util::{DBPath, assert_item, assert_no_item};
-use rust_rocksdb::{ColumnFamilyDescriptor, DB, Options, ReadOptions, WriteBatchWithIndex};
+use rust_rocksdb::{
+    ColumnFamilyDescriptor, DB, Options, ReadOptions, WriteBatchIterator, WriteBatchWithIndex,
+};
 
 mod util;
 
@@ -340,4 +342,198 @@ fn test_wbwi_single_delete_cf() {
         assert!(db.get_cf(&cf, b"k1").unwrap().is_none());
         assert_eq!(db.get_cf(&cf, b"k2").unwrap().unwrap(), b"v2");
     }
+}
+
+#[test]
+fn test_wbwi_unindexed_write_batch_delete_range() {
+    let path = DBPath::new("_rust_rocksdb_wbwi_unindexed_write_batch_delete_range");
+    {
+        let db = DB::open_default(&path).expect("DB should open");
+        for (k, v) in [
+            (b"k1", b"v1"),
+            (b"k2", b"v2"),
+            (b"k3", b"v3"),
+            (b"k4", b"v4"),
+        ] {
+            db.put(k, v).unwrap();
+        }
+
+        let mut wbwi = WriteBatchWithIndex::new(0, true);
+        wbwi.put(b"k5", b"v5");
+        wbwi.unindexed_write_batch().delete_range(b"k2", b"k4");
+
+        // The range deletion is a record in the batch...
+        assert_eq!(wbwi.len(), 2);
+        // ...but the index does not know about it: a read through the batch still sees k2.
+        let readopts = ReadOptions::default();
+        assert_eq!(
+            wbwi.get_from_batch_and_db(&db, b"k2", &readopts)
+                .unwrap()
+                .unwrap(),
+            b"v2"
+        );
+
+        db.write_wbwi(&wbwi).unwrap();
+
+        assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v1");
+        assert!(db.get(b"k2").unwrap().is_none());
+        assert!(db.get(b"k3").unwrap().is_none());
+        assert_eq!(db.get(b"k4").unwrap().unwrap(), b"v4");
+        assert_eq!(db.get(b"k5").unwrap().unwrap(), b"v5");
+    }
+}
+
+#[test]
+fn test_wbwi_unindexed_write_batch_delete_range_cf() {
+    let path = DBPath::new("_rust_rocksdb_wbwi_unindexed_write_batch_delete_range_cf");
+    {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+
+        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let db = DB::open_cf_descriptors(&opts, &path, vec![cf_descriptor]).unwrap();
+        let cf = db.cf_handle("test_cf").unwrap();
+
+        for (k, v) in [
+            (b"k1", b"v1"),
+            (b"k2", b"v2"),
+            (b"k3", b"v3"),
+            (b"k4", b"v4"),
+        ] {
+            db.put_cf(&cf, k, v).unwrap();
+            db.put(k, v).unwrap();
+        }
+
+        let mut wbwi = WriteBatchWithIndex::new(0, true);
+        wbwi.put_cf(&cf, b"k5", b"v5");
+        wbwi.unindexed_write_batch()
+            .delete_range_cf(&cf, b"k2", b"k4");
+
+        db.write_wbwi(&wbwi).unwrap();
+
+        assert_eq!(db.get_cf(&cf, b"k1").unwrap().unwrap(), b"v1");
+        assert!(db.get_cf(&cf, b"k2").unwrap().is_none());
+        assert!(db.get_cf(&cf, b"k3").unwrap().is_none());
+        assert_eq!(db.get_cf(&cf, b"k4").unwrap().unwrap(), b"v4");
+        assert_eq!(db.get_cf(&cf, b"k5").unwrap().unwrap(), b"v5");
+
+        // The default column family is untouched.
+        for (k, v) in [
+            (b"k1", b"v1"),
+            (b"k2", b"v2"),
+            (b"k3", b"v3"),
+            (b"k4", b"v4"),
+        ] {
+            assert_eq!(db.get(k).unwrap().unwrap(), v);
+        }
+    }
+}
+
+#[test]
+fn test_wbwi_unindexed_write_batch_put_log_data() {
+    let path = DBPath::new("_rust_rocksdb_wbwi_unindexed_write_batch_put_log_data");
+    {
+        let db = DB::open_default(&path).expect("DB should open");
+
+        let mut wbwi = WriteBatchWithIndex::new(0, true);
+        wbwi.put(b"k1", b"v1");
+        let size_before = wbwi.size_in_bytes();
+
+        wbwi.unindexed_write_batch()
+            .put_log_data(b"replication marker");
+
+        // Log data is serialized into the batch but does not count as an operation.
+        assert_eq!(wbwi.len(), 1);
+        assert!(wbwi.size_in_bytes() > size_before);
+
+        db.write_wbwi(&wbwi).unwrap();
+        assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v1");
+    }
+}
+
+#[test]
+fn test_wbwi_unindexed_write_batch_iterate() {
+    struct Collector(Vec<(String, String)>);
+
+    impl WriteBatchIterator for Collector {
+        fn put(&mut self, key: &[u8], value: &[u8]) {
+            self.0.push((
+                String::from_utf8_lossy(key).into_owned(),
+                String::from_utf8_lossy(value).into_owned(),
+            ));
+        }
+
+        fn delete(&mut self, key: &[u8]) {
+            self.0.push((
+                String::from_utf8_lossy(key).into_owned(),
+                String::from("<deleted>"),
+            ));
+        }
+    }
+
+    let mut wbwi = WriteBatchWithIndex::new(0, true);
+    wbwi.put(b"k1", b"v1");
+    wbwi.delete(b"k2");
+    wbwi.put(b"k3", b"v3");
+
+    let mut collector = Collector(Vec::new());
+    wbwi.unindexed_write_batch().iterate(&mut collector);
+
+    assert_eq!(
+        collector.0,
+        vec![
+            ("k1".to_string(), "v1".to_string()),
+            ("k2".to_string(), "<deleted>".to_string()),
+            ("k3".to_string(), "v3".to_string()),
+        ]
+    );
+}
+
+/// Pins the savepoint caveat documented on `UnindexedWriteBatch`: rolling back is fine as long as
+/// it discards every range deletion...
+#[test]
+fn test_wbwi_rollback_discarding_delete_range_succeeds() {
+    let path = DBPath::new("_rust_rocksdb_wbwi_rollback_discarding_delete_range");
+    {
+        let db = DB::open_default(&path).expect("DB should open");
+        db.put(b"k2", b"v2").unwrap();
+
+        let mut wbwi = WriteBatchWithIndex::new(0, true);
+        wbwi.put(b"k1", b"v1");
+        wbwi.set_savepoint();
+        wbwi.unindexed_write_batch().delete_range(b"k2", b"k3");
+        wbwi.put(b"k4", b"v4");
+
+        wbwi.rollback_to_savepoint().unwrap();
+
+        // Only the pre-savepoint put survives, and it is still indexed.
+        assert_eq!(wbwi.len(), 1);
+        let get_opts = Options::default();
+        assert_eq!(
+            wbwi.get_from_batch(b"k1", &get_opts).unwrap().unwrap(),
+            b"v1"
+        );
+
+        db.write_wbwi(&wbwi).unwrap();
+        assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v1");
+        assert_eq!(db.get(b"k2").unwrap().unwrap(), b"v2");
+        assert!(db.get(b"k4").unwrap().is_none());
+    }
+}
+
+/// ...but a rollback that keeps a range deletion fails, because RocksDB rebuilds the index by
+/// replaying the batch and its replay rejects range-deletion records.
+#[test]
+fn test_wbwi_rollback_keeping_delete_range_fails() {
+    let mut wbwi = WriteBatchWithIndex::new(0, true);
+    wbwi.unindexed_write_batch().delete_range(b"k2", b"k3");
+    wbwi.set_savepoint();
+    wbwi.put(b"k4", b"v4");
+
+    let err = wbwi.rollback_to_savepoint().unwrap_err();
+    assert!(
+        err.to_string().contains("Corruption"),
+        "unexpected error: {err}"
+    );
 }

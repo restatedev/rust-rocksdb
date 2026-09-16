@@ -158,7 +158,7 @@ pub use crate::{
     write_batch::{
         WriteBatch, WriteBatchIterator, WriteBatchIteratorCf, WriteBatchWithTransaction,
     },
-    write_batch_with_index::WriteBatchWithIndex,
+    write_batch_with_index::{UnindexedWriteBatch, WriteBatchWithIndex},
     write_buffer_manager::WriteBufferManager,
 };
 

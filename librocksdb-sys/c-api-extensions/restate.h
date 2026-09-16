@@ -383,6 +383,28 @@ extern ROCKSDB_LIBRARY_API const char*
 rocksdb_sst_partitioner_context_largest_user_key(
     rocksdb_sst_partitioner_context_t* context, size_t* len);
 
+/* ============================================================================
+ * WriteBatchWithIndex - underlying WriteBatch access
+ * ============================================================================
+ */
+
+/* Returns the WriteBatch that backs a WriteBatchWithIndex
+ * (WriteBatchWithIndex::GetWriteBatch()). This is the batch that
+ * rocksdb_write_writebatch_wi() commits, so records appended to it directly
+ * are persisted along with the indexed ones.
+ *
+ * Ownership stays with the WriteBatchWithIndex: the returned pointer is valid
+ * until the wbwi is destroyed or cleared and must NOT be passed to
+ * rocksdb_writebatch_destroy().
+ *
+ * Records written through this handle bypass the wbwi's index: they are not
+ * visible to rocksdb_writebatch_wi_get_from_batch*() or to iterators created
+ * with rocksdb_writebatch_wi_create_iterator_with_base*(). Intended for
+ * record types the wbwi API cannot express (range deletions, log data, ...).
+ */
+extern ROCKSDB_LIBRARY_API rocksdb_writebatch_t*
+rocksdb_writebatch_wi_get_write_batch(rocksdb_writebatch_wi_t* wbwi);
+
 #ifdef __cplusplus
 }
 #endif
