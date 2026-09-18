@@ -352,6 +352,11 @@ impl<D: DBAccess + 'static> OwnedPrefixProber<D> {
     }
 }
 
+/// Key type of the column family handle maps, used in the [`ThreadMode`]
+/// internals. Names of up to 23 bytes (the common case) are stored inline, so
+/// building the maps and looking names up by `&str` needs no heap allocation.
+pub type CompactString = smartstring::SmartString<smartstring::LazyCompact>;
+
 /// Marker trait to specify single or multi threaded column family alternations for
 /// [`DBWithThreadMode<T>`]
 ///
@@ -365,7 +370,7 @@ impl<D: DBAccess + 'static> OwnedPrefixProber<D> {
 pub trait ThreadMode {
     /// Internal implementation for storing column family handles
     fn new_cf_map_internal(
-        cf_map: BTreeMap<String, *mut ffi::rocksdb_column_family_handle_t>,
+        cf_map: BTreeMap<CompactString, *mut ffi::rocksdb_column_family_handle_t>,
     ) -> Self;
     /// Internal implementation for dropping column family handles
     fn drop_all_cfs_internal(&mut self);
@@ -378,7 +383,7 @@ pub trait ThreadMode {
 ///
 /// See [`DB`] for more details, including performance implications for each mode
 pub struct SingleThreaded {
-    pub(crate) cfs: HashMap<String, ColumnFamily>,
+    pub(crate) cfs: HashMap<CompactString, ColumnFamily>,
 }
 
 /// Actual marker type for the marker trait `ThreadMode`, which holds
@@ -387,12 +392,12 @@ pub struct SingleThreaded {
 ///
 /// See [`DB`] for more details, including performance implications for each mode
 pub struct MultiThreaded {
-    pub(crate) cfs: RwLock<HashMap<String, Arc<UnboundColumnFamily>>>,
+    pub(crate) cfs: RwLock<HashMap<CompactString, Arc<UnboundColumnFamily>>>,
 }
 
 impl ThreadMode for SingleThreaded {
     fn new_cf_map_internal(
-        cfs: BTreeMap<String, *mut ffi::rocksdb_column_family_handle_t>,
+        cfs: BTreeMap<CompactString, *mut ffi::rocksdb_column_family_handle_t>,
     ) -> Self {
         Self {
             cfs: cfs
@@ -410,7 +415,7 @@ impl ThreadMode for SingleThreaded {
 
 impl ThreadMode for MultiThreaded {
     fn new_cf_map_internal(
-        cfs: BTreeMap<String, *mut ffi::rocksdb_column_family_handle_t>,
+        cfs: BTreeMap<CompactString, *mut ffi::rocksdb_column_family_handle_t>,
     ) -> Self {
         Self {
             cfs: RwLock::new(
@@ -1133,7 +1138,7 @@ impl<T: ThreadMode> DBWithThreadMode<T> {
             }
 
             for (cf_desc, inner) in cfs_v.iter().zip(cfhandles) {
-                cf_map.insert(cf_desc.name.clone(), inner);
+                cf_map.insert(cf_desc.name.clone().into(), inner);
             }
         }
 
@@ -5370,7 +5375,7 @@ impl<I: DBInner> DBCommon<SingleThreaded, I> {
         let inner = self.create_inner_cf_handle(name.as_ref(), opts)?;
         self.cfs
             .cfs
-            .insert(name.as_ref().to_string(), ColumnFamily { inner });
+            .insert(name.as_ref().into(), ColumnFamily { inner });
         Ok(())
     }
 
@@ -5396,7 +5401,7 @@ impl<I: DBInner> DBCommon<SingleThreaded, I> {
         let inner = self.create_inner_cf_handle_with_ttl(name.as_ref(), opts, ttl)?;
         self.cfs
             .cfs
-            .insert(name.as_ref().to_string(), ColumnFamily { inner });
+            .insert(name.as_ref().into(), ColumnFamily { inner });
         Ok(())
     }
 
@@ -5423,7 +5428,7 @@ impl<I: DBInner> DBCommon<SingleThreaded, I> {
         let names = convert_cf_names(names)?;
         let created = self.create_inner_cf_handles(&names, opts);
         for ((name, _), inner) in names.into_iter().zip(created.handles) {
-            self.cfs.cfs.insert(name, ColumnFamily { inner });
+            self.cfs.cfs.insert(name.into(), ColumnFamily { inner });
         }
         match created.error {
             Some(err) => Err(err),
@@ -5474,7 +5479,7 @@ impl<I: DBInner> DBCommon<SingleThreaded, I> {
             Err(e) => {
                 // The column family is still there, so put the handle back
                 // rather than destroying the only way to reach it.
-                self.cfs.cfs.insert(name.to_owned(), cf);
+                self.cfs.cfs.insert(name.into(), cf);
                 Err(e)
             }
         }
@@ -5489,7 +5494,7 @@ impl<I: DBInner> DBCommon<SingleThreaded, I> {
     ///
     /// The order of names is unspecified and may vary between calls.
     pub fn cf_names(&self) -> Vec<String> {
-        self.cfs.cfs.keys().cloned().collect()
+        self.cfs.cfs.keys().map(ToString::to_string).collect()
     }
 }
 
@@ -5501,7 +5506,7 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
         let mut cfs = self.cfs.cfs.write();
         let inner = self.create_inner_cf_handle(name.as_ref(), opts)?;
         cfs.insert(
-            name.as_ref().to_string(),
+            name.as_ref().into(),
             Arc::new(UnboundColumnFamily { inner }),
         );
         Ok(())
@@ -5531,7 +5536,7 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
         let mut cfs = self.cfs.cfs.write();
         let inner = self.create_inner_cf_handle_with_ttl(name.as_ref(), opts, ttl)?;
         cfs.insert(
-            name.as_ref().to_string(),
+            name.as_ref().into(),
             Arc::new(UnboundColumnFamily { inner }),
         );
         Ok(())
@@ -5558,7 +5563,7 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
         let mut cfs = self.cfs.cfs.write();
         let created = self.create_inner_cf_handles(&names, opts);
         for ((name, _), inner) in names.into_iter().zip(created.handles) {
-            cfs.insert(name, Arc::new(UnboundColumnFamily { inner }));
+            cfs.insert(name.into(), Arc::new(UnboundColumnFamily { inner }));
         }
         match created.error {
             Some(err) => Err(err),
@@ -5592,7 +5597,7 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
             ))
         };
         cfs.insert(
-            column_family_name.as_ref().to_string(),
+            column_family_name.as_ref().into(),
             Arc::new(UnboundColumnFamily { inner }),
         );
         Ok(())
@@ -5618,7 +5623,7 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
             Err(e) => {
                 // The column family is still there, so put the handle back
                 // rather than destroying the only way to reach it.
-                self.cfs.cfs.write().insert(name.to_owned(), cf);
+                self.cfs.cfs.write().insert(name.into(), cf);
                 Err(e)
             }
         }
@@ -5638,7 +5643,12 @@ impl<I: DBInner> DBCommon<MultiThreaded, I> {
     ///
     /// The order of names is unspecified and may vary between calls.
     pub fn cf_names(&self) -> Vec<String> {
-        self.cfs.cfs.read().keys().cloned().collect()
+        self.cfs
+            .cfs
+            .read()
+            .keys()
+            .map(ToString::to_string)
+            .collect()
     }
 }
 

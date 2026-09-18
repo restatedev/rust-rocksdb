@@ -146,9 +146,9 @@ pub use crate::{
     },
     comparator::Comparator,
     db::{
-        ColumnFamilyMetaData, CompactFilesResult, DB, DBAccess, DBCommon, DBWithThreadMode,
-        ExportImportFilesMetaData, GetIntoBufferResult, LiveFile, MultiThreaded, OwnedPrefixProber,
-        PrefixProber, Range, SingleThreaded, ThreadMode, TimestampedValue,
+        ColumnFamilyMetaData, CompactFilesResult, CompactString, DB, DBAccess, DBCommon,
+        DBWithThreadMode, ExportImportFilesMetaData, GetIntoBufferResult, LiveFile, MultiThreaded,
+        OwnedPrefixProber, PrefixProber, Range, SingleThreaded, ThreadMode, TimestampedValue,
     },
     db_iterator::{
         DBIterator, DBIteratorWithThreadMode, DBRawIterator, DBRawIteratorWithThreadMode,
