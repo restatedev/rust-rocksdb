@@ -12,8 +12,58 @@
 
 RocksDB is a fast key-value storage engine based on LSM-trees, optimized for SSDs with excellent performance for both reads and writes. This crate provides safe, idiomatic Rust bindings with support for all major RocksDB features including transactions, column families, backups, and advanced compression.
 
+## Maintaining the Restate fork
+
+This fork carries a linear series of Restate patches on
+[zaidoon1/rust-rocksdb](https://github.com/zaidoon1/rust-rocksdb).
+**Current upstream base:** `v0.53.0` (`c8b2e2c3a6939ea2cd35ff073c10b1e431615d88`).
+See [RESTATE_PATCHES.md](RESTATE_PATCHES.md) for the carried patches and migration notes.
+
+- **Development:** `master` is the current patch stack, not an immutable release.
+  Use short-lived feature/experiment branches; squash-merge or rebase-and-merge
+  logical changes with their tests. Explain each patch's purpose and upstream status.
+- **Releases:** create immutable annotated tags `v<upstream-version>-restate.<revision>`
+  (for example, `v0.53.0-restate.1`). Keep upstream tags unchanged. Restate pins the
+  tagged commit's full SHA in Cargo; keep crate versions aligned with upstream and
+  update the consumer's version requirement too. Never move or delete release tags.
+- **Upstream upgrades:** work on a temporary branch and replay only the downstream
+  patch range onto the new upstream release. Prefer upstream APIs where equivalent,
+  remove superseded patches, and review behavioral differences as well as conflicts.
+  Update the recorded base and patch inventory. Do not merge upstream into `master`.
+
+In this example, `restate` is the remote for `restatedev/rust-rocksdb` and `zaidoon1`
+is the upstream remote. Set `OLD_BASE` and `NEW_BASE` to the verified upstream tags:
+
+```sh
+git fetch --no-tags restate master
+git fetch --no-tags zaidoon1 "refs/tags/$NEW_BASE:refs/tags/$NEW_BASE"
+OLD_TIP=$(git rev-parse restate/master)
+git switch -c "upgrade/$NEW_BASE" "$OLD_TIP"
+git rebase --onto "$NEW_BASE" "$OLD_BASE"
+git submodule update --init --recursive
+git range-diff "$OLD_BASE..$OLD_TIP" "$NEW_BASE..HEAD"
+```
+
+Before publishing, run formatting, Clippy, workspace tests (default features and
+`multi-threaded-cf,jemalloc`), doctests, and downstream Restate checks/tests. Keep
+the upstream CI matrix, including native-platform and sanitizer checks. After review,
+publish the tested tip with an **explicit lease on the recorded old tip**:
+`git push --force-with-lease="refs/heads/master:$OLD_TIP" restate HEAD:refs/heads/master`.
+If the lease fails, incorporate the intervening work and revalidate; do not override it.
+An upgrade is a coordinated history replacement, not a normal merge of the upgrade PR.
+Tag and publish the exact tested release commit separately.
+
+After an upgrade, feature authors should preserve their old branch point and use
+`git rebase --onto restate/master <old-feature-base> <feature-branch>` to transplant
+only their feature commits. Existing release tags retain the old histories. Preserve
+legacy release branches during migration; create new maintenance branches only when
+an older tagged release needs independent fixes, not for every release.
+For the initial cutover, archive the legacy `master` before repointing it to the
+tested migration branch; the upgrade commands above describe subsequent upgrades.
+
 ## 📋 Table of Contents
 
+- [Maintaining the Restate fork](#maintaining-the-restate-fork)
 - [🚀 Quick Start](#-quick-start)
 - [ Usage Examples](#-usage-examples)
 - [⚙️ Features & Configuration](#️-features--configuration)

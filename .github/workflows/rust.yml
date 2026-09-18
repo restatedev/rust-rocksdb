@@ -620,8 +620,8 @@ jobs:
       - name: Run rocksdb tests
         run: cargo nextest run --all
 
-      - name: Run rocksdb tests (multi-threaded-cf)
-        run: cargo nextest run --all --features multi-threaded-cf
+      - name: Run rocksdb tests (multi-threaded-cf and raw C API)
+        run: cargo nextest run --all --features multi-threaded-cf,raw-ptr
 
       # `always()` so a failing test still restores write permission. Without
       # it the post-checkout and post-cache steps cannot write .git/config, and

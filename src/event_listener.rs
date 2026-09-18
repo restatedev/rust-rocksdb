@@ -3,8 +3,9 @@ use crate::compaction::{
 };
 use crate::ffi_util::convert_rocksdb_error;
 use crate::table_properties::TableProperties;
-use crate::{DBCompressionType, Error, ffi};
+use crate::{CStrLike, DBCompressionType, Error, ffi};
 use libc::{c_char, c_int, c_void};
+use std::ffi::CStr;
 use std::fmt;
 use std::iter::FusedIterator;
 use std::ops::Range;
@@ -356,6 +357,45 @@ impl FlushJobInfo {
         // SAFETY: the C API returns the address of a `TableProperties` member of this job
         // info, which RocksDB owns and which lives for at least the borrow of `self`.
         unsafe { TableProperties::from_ptr(ffi::rocksdb_flushjobinfo_table_properties(self.inner)) }
+    }
+
+    /// Looks up a NUL-terminated user property in this flush's table.
+    ///
+    /// Shorthand for [`TableProperties::get_user_collected_property`] on
+    /// [`Self::table_properties`].
+    ///
+    /// String inputs are converted to an owned C string. Passing a `&CStr` or
+    /// `&CString` avoids a key-conversion allocation; an owned `CString` is
+    /// consumed without copying. The result borrows the flush event, not `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` cannot be converted to a C string, such as a string with
+    /// an interior NUL. A panic escaping a listener callback aborts the process;
+    /// pass a validated C string when input validity is not already guaranteed.
+    pub fn get_user_collected_property(&self, key: impl CStrLike) -> Option<&CStr> {
+        let key = key.bake().expect("property key must be a valid C string");
+        self.table_properties().get_user_collected_property(&key)
+    }
+
+    /// Returns NUL-terminated user property keys with the given prefix.
+    ///
+    /// Shorthand for [`TableProperties::get_user_collected_property_keys`] on
+    /// [`Self::table_properties`].
+    /// See [`Self::get_user_collected_property`] for input conversion costs.
+    /// Returned keys borrow the flush event, not `prefix`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `prefix` cannot be converted to a C string, such as a string
+    /// with an interior NUL. A panic escaping a listener callback aborts the
+    /// process; pass a validated C string for untrusted input.
+    pub fn get_user_collected_property_keys(&self, prefix: impl CStrLike) -> Vec<&CStr> {
+        let prefix = prefix
+            .bake()
+            .expect("property prefix must be a valid C string");
+        self.table_properties()
+            .get_user_collected_property_keys(&prefix)
     }
 
     /// The blob file this flush created at `pos`, or `None` once `pos` reaches

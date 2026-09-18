@@ -27,8 +27,10 @@
 //! have its allocations attributed to whichever measurement happens to be open.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use rust_rocksdb::event_listener::{EventListener, FlushJobInfo};
 use rust_rocksdb::{DB, Options};
 
 mod util;
@@ -71,11 +73,39 @@ fn count_allocs(f: impl FnOnce()) -> usize {
     ALLOCS.load(Ordering::Relaxed) - before
 }
 
+struct FlushPropertyAllocationListener(Arc<AtomicUsize>);
+
+impl EventListener for FlushPropertyAllocationListener {
+    fn on_flush_completed(&self, info: &FlushJobInfo) {
+        let key = c"__allocation_test_missing_property__".to_owned();
+        let allocs = count_allocs(|| {
+            for _ in 0..16 {
+                assert!(info.get_user_collected_property(key.as_c_str()).is_none());
+                assert!(info.get_user_collected_property(&key).is_none());
+                // A missing prefix produces no result-vector allocation, so
+                // any counted allocation would expose an unnecessary key copy.
+                assert!(
+                    info.get_user_collected_property_keys(key.as_c_str())
+                        .is_empty()
+                );
+                assert!(info.get_user_collected_property_keys(&key).is_empty());
+            }
+        });
+        assert_eq!(
+            allocs, 0,
+            "borrowed C-string property keys should not allocate"
+        );
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 #[test]
 fn hot_read_paths_do_not_allocate() {
     let path = DBPath::new("_rust_rocksdb_alloc_counts");
     let mut opts = Options::default();
     opts.create_if_missing(true);
+    let flush_checks = Arc::new(AtomicUsize::new(0));
+    opts.add_event_listener(FlushPropertyAllocationListener(flush_checks.clone()));
     let db = DB::open(&opts, &path).unwrap();
 
     db.put(b"prefix_a/1", b"v").unwrap();
@@ -161,4 +191,9 @@ fn hot_read_paths_do_not_allocate() {
         allocs, 0,
         "get_into_buffer should not allocate, got {allocs} over 64 calls"
     );
+
+    // Measure the property helpers inside a real flush callback, after the
+    // foreground allocation measurements above have finished.
+    db.flush().unwrap();
+    assert_eq!(flush_checks.load(Ordering::Relaxed), 1);
 }
