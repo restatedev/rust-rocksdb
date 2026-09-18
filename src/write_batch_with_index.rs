@@ -5,14 +5,42 @@ use crate::{
     AsColumnFamilyRef, Comparator, DBAccess, DBCommon, DBPinnableSlice,
     DBRawIteratorWithThreadMode, Error, Options, ReadOptions, ThreadMode, ffi,
 };
-use libc::{c_char, c_uchar, c_void, size_t};
+use libc::{c_char, c_int, c_uchar, c_void, size_t};
+use smallvec::SmallVec;
+use std::io::IoSlice;
 use std::sync::Arc;
+
+/// Pointer and length arrays for one vectored key or value, laid out the way
+/// `rocksdb_writebatch_wi_putv` and friends expect them. Up to
+/// `INLINE_INDEXED_BATCH_PARTS` parts stay on the stack.
+struct IndexedBatchParts {
+    ptrs: SmallVec<[*const c_char; INLINE_INDEXED_BATCH_PARTS]>,
+    lens: SmallVec<[size_t; INLINE_INDEXED_BATCH_PARTS]>,
+}
+
+const INLINE_INDEXED_BATCH_PARTS: usize = 16;
+
+impl IndexedBatchParts {
+    fn new(parts: &[IoSlice<'_>]) -> Self {
+        Self {
+            ptrs: parts.iter().map(|s| s.as_ptr().cast::<c_char>()).collect(),
+            lens: parts.iter().map(|s| s.len()).collect(),
+        }
+    }
+
+    /// The part count in the C API's type. Overflowing it takes more than
+    /// `c_int::MAX` slices, so the panic is unreachable in practice.
+    fn count(&self) -> c_int {
+        c_int::try_from(self.ptrs.len()).expect("too many vectored parts")
+    }
+}
 
 /// A write batch that can also be read from, and that can be layered on top of
 /// a database iterator.
 ///
-/// There is deliberately no vectored write here, unlike
-/// [`WriteBatch::put_vectored`](crate::WriteBatch::put_vectored).
+/// Vectored writes are provided for convenience, but unlike
+/// [`WriteBatch::put_vectored`](crate::WriteBatch::put_vectored), they concatenate
+/// the input parts internally before indexing them.
 /// `WriteBatchWithIndex` does not override the `SliceParts` overloads, so
 /// `rocksdb_writebatch_wi_putv` and friends fall through to
 /// `WriteBatchBase`, which concatenates the parts into a temporary
@@ -444,6 +472,46 @@ impl WriteBatchWithIndex {
         }
     }
 
+    /// Insert a value into the database using vectored I/O from multiple memory segments.
+    /// Avoids user-side copying when data spans multiple slices, though RocksDB still copies internally.
+    pub fn put_vectored(&mut self, key: &[IoSlice<'_>], value: &[IoSlice<'_>]) {
+        let (key, value) = (IndexedBatchParts::new(key), IndexedBatchParts::new(value));
+        unsafe {
+            ffi::rocksdb_writebatch_wi_putv(
+                self.inner,
+                key.count(),
+                key.ptrs.as_ptr(),
+                key.lens.as_ptr(),
+                value.count(),
+                value.ptrs.as_ptr(),
+                value.lens.as_ptr(),
+            );
+        }
+    }
+
+    /// Insert a value into a column family using vectored I/O from multiple memory segments.
+    /// Avoids user-side copying when data spans multiple slices, though RocksDB still copies internally.
+    pub fn put_cf_vectored(
+        &mut self,
+        cf: &impl AsColumnFamilyRef,
+        key: &[IoSlice<'_>],
+        value: &[IoSlice<'_>],
+    ) {
+        let (key, value) = (IndexedBatchParts::new(key), IndexedBatchParts::new(value));
+        unsafe {
+            ffi::rocksdb_writebatch_wi_putv_cf(
+                self.inner,
+                cf.inner(),
+                key.count(),
+                key.ptrs.as_ptr(),
+                key.lens.as_ptr(),
+                value.count(),
+                value.ptrs.as_ptr(),
+                value.lens.as_ptr(),
+            );
+        }
+    }
+
     pub fn merge<K, V>(&mut self, key: K, value: V)
     where
         K: AsRef<[u8]>,
@@ -479,6 +547,46 @@ impl WriteBatchWithIndex {
                 key.len() as size_t,
                 value.as_ptr() as *const c_char,
                 value.len() as size_t,
+            );
+        }
+    }
+
+    /// Merge a value into the database using vectored I/O from multiple memory segments.
+    /// Avoids user-side copying when data spans multiple slices, though RocksDB still copies internally.
+    pub fn merge_vectored(&mut self, key: &[IoSlice<'_>], value: &[IoSlice<'_>]) {
+        let (key, value) = (IndexedBatchParts::new(key), IndexedBatchParts::new(value));
+        unsafe {
+            ffi::rocksdb_writebatch_wi_mergev(
+                self.inner,
+                key.count(),
+                key.ptrs.as_ptr(),
+                key.lens.as_ptr(),
+                value.count(),
+                value.ptrs.as_ptr(),
+                value.lens.as_ptr(),
+            );
+        }
+    }
+
+    /// Merge a value into a column family using vectored I/O from multiple memory segments.
+    /// Avoids user-side copying when data spans multiple slices, though RocksDB still copies internally.
+    pub fn merge_cf_vectored(
+        &mut self,
+        cf: &impl AsColumnFamilyRef,
+        key: &[IoSlice<'_>],
+        value: &[IoSlice<'_>],
+    ) {
+        let (key, value) = (IndexedBatchParts::new(key), IndexedBatchParts::new(value));
+        unsafe {
+            ffi::rocksdb_writebatch_wi_mergev_cf(
+                self.inner,
+                cf.inner(),
+                key.count(),
+                key.ptrs.as_ptr(),
+                key.lens.as_ptr(),
+                value.count(),
+                value.ptrs.as_ptr(),
+                value.lens.as_ptr(),
             );
         }
     }
@@ -544,13 +652,17 @@ impl WriteBatchWithIndex {
         }
     }
 
-    /// Removes entries in the range `[from, to)`.
+    /// Unsupported range deletion for an indexed write batch.
     ///
-    /// Range deletes are recorded in the batch but they are not indexed. Reads
-    /// and iterators that go through the batch, such as
-    /// [`get_from_batch`](Self::get_from_batch) and
-    /// [`iterator_with_base`](Self::iterator_with_base), do not see them. They
-    /// only take effect once the batch is written to the database.
+    /// # Warning
+    ///
+    /// **This method is a no-op with the bundled RocksDB 11.8.1.** The native
+    /// `WriteBatchWithIndex::DeleteRange` returns `NotSupported`, but the C API
+    /// discards that status. No deletion is recorded or applied, even after
+    /// writing the batch to the database, and no error is reported to the caller.
+    ///
+    /// For supported range deletion, use an ordinary
+    /// [`WriteBatch::delete_range`](crate::WriteBatch::delete_range).
     pub fn delete_range<K: AsRef<[u8]>>(&mut self, from: K, to: K) {
         let (start_key, end_key) = (from.as_ref(), to.as_ref());
 
@@ -565,10 +677,15 @@ impl WriteBatchWithIndex {
         }
     }
 
-    /// Removes entries in the range `[from, to)` of one column family.
+    /// Unsupported range deletion for one column family in an indexed write batch.
     ///
-    /// See [`delete_range`](Self::delete_range) for why these are invisible to
-    /// reads through the batch.
+    /// # Warning
+    ///
+    /// **This method is a no-op with the bundled RocksDB 11.8.1.** It neither
+    /// records nor applies a deletion and reports no error. See
+    /// [`delete_range`](Self::delete_range) for the underlying C API limitation.
+    /// For supported range deletion, use an ordinary
+    /// [`WriteBatch::delete_range_cf`](crate::WriteBatch::delete_range_cf).
     pub fn delete_range_cf<K: AsRef<[u8]>>(&mut self, cf: &impl AsColumnFamilyRef, from: K, to: K) {
         let (start_key, end_key) = (from.as_ref(), to.as_ref());
 
