@@ -675,6 +675,7 @@ dependencies = [
  "pretty_assertions",
  "rust-librocksdb-sys",
  "serde",
+ "smallvec",
  "smartstring",
  "tempfile",
 ]
