@@ -32,6 +32,12 @@
  * types. */
 #include "rocksdb/c.h"
 
+/* Restate-specific C-API additions (table properties collector, table filter,
+ * SST file reader). Declared in their own header to keep the restate overlay
+ * isolated from upstream's c_api_extensions surface; restate.h also pulls in
+ * c.h, so bindgen scanning this file sees the full set. */
+#include "restate.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
