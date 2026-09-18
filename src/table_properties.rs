@@ -27,12 +27,19 @@
 //! for user collected properties, and the built in names are only ASCII by convention. The
 //! slices point straight into the C++ strings, so reading them copies and allocates nothing.
 
+use std::ffi::CStr;
 use std::marker::PhantomData;
 
 use libc::c_char;
 
 use crate::ffi;
 use crate::ffi_util::bytes_from_raw;
+
+mod collector;
+pub use collector::{
+    CollectorError, EntryType, TablePropertiesCollector, TablePropertiesCollectorContext,
+    TablePropertiesCollectorFactory, TablePropertiesExt,
+};
 
 /// Shared signature of the `rocksdb_table_properties_*` string getters.
 type StringGetter =
@@ -52,6 +59,39 @@ pub struct TableProperties<'a> {
 }
 
 impl<'a> TableProperties<'a> {
+    /// Looks up a NUL-terminated user property in O(log n) time.
+    ///
+    /// For binary values containing NUL bytes, use the upstream byte-slice
+    /// accessors instead. The result borrows the event or collection owner.
+    pub fn get_user_collected_property(&self, key: &CStr) -> Option<&'a CStr> {
+        unsafe {
+            let value =
+                ffi::rocksdb_table_properties_get_user_collected_property(self.inner, key.as_ptr());
+            (!value.is_null()).then(|| CStr::from_ptr(value))
+        }
+    }
+
+    /// Returns NUL-terminated user property keys with the given prefix.
+    pub fn get_user_collected_property_keys(&self, prefix: &CStr) -> Vec<&'a CStr> {
+        unsafe {
+            let mut count = 0;
+            let keys = ffi::rocksdb_table_properties_get_user_collected_property_keys(
+                self.inner,
+                prefix.as_ptr(),
+                &raw mut count,
+            );
+            if keys.is_null() {
+                return Vec::new();
+            }
+            let result = std::slice::from_raw_parts(keys, count)
+                .iter()
+                .map(|&key| CStr::from_ptr(key))
+                .collect();
+            ffi::rocksdb_free(keys.cast_mut().cast());
+            result
+        }
+    }
+
     /// Wraps a table properties pointer owned by RocksDB.
     ///
     /// # Safety

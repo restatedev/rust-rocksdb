@@ -499,6 +499,7 @@ mod vendor {
         // same `librocksdb.a`; the linker resolves the new symbols out of
         // the extension's `.o` and everything else out of the submodule's.
         cfg.file("c-api-extensions/c_api_extensions.cc");
+        cfg.file("c-api-extensions/restate.cc");
         cfg.compile("librocksdb.a");
 
         if !crc_sources.is_empty() {
@@ -2026,6 +2027,7 @@ mod extensions {
         }
 
         cfg.file("c-api-extensions/c_api_extensions.cc");
+        cfg.file("c-api-extensions/restate.cc");
         cfg.define("RUST_ROCKSDB_SYSTEM_BACKEND", None);
         // `base_cfg` defines this for the vendored build, where the same
         // source file is compiled into librocksdb.a. Without it here, one
