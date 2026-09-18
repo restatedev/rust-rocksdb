@@ -56,6 +56,66 @@ impl Drop for CfMetaDataRoot {
 unsafe impl Send for CfMetaDataRoot {}
 unsafe impl Sync for CfMetaDataRoot {}
 
+/// A column-family metadata snapshot with lazy access to its levels and files.
+///
+/// Unlike the filtered upstream query, this preserves empty levels and allocates
+/// level handles only when requested. Child handles keep the native snapshot
+/// alive using the same shared ownership as upstream's metadata API.
+pub struct ColumnFamilyMetaDataRef<'db> {
+    root: Arc<CfMetaDataRoot>,
+    _db: std::marker::PhantomData<&'db ()>,
+}
+
+impl ColumnFamilyMetaDataRef<'_> {
+    /// # Safety
+    /// `inner` must be an owned, live column-family metadata handle. The chosen
+    /// lifetime must not exceed the database borrow used to obtain it.
+    pub(crate) unsafe fn from_ptr(inner: *mut ffi::rocksdb_column_family_metadata_t) -> Self {
+        Self {
+            root: Arc::new(CfMetaDataRoot { inner }),
+            _db: std::marker::PhantomData,
+        }
+    }
+
+    pub fn size(&self) -> u64 {
+        unsafe { ffi::rocksdb_column_family_metadata_get_size(self.root.inner) }
+    }
+
+    pub fn name(&self) -> String {
+        unsafe {
+            from_cstr_and_free(ffi::rocksdb_column_family_metadata_get_name(
+                self.root.inner,
+            ))
+        }
+    }
+
+    pub fn file_count(&self) -> usize {
+        unsafe { ffi::rocksdb_column_family_metadata_get_file_count(self.root.inner) }
+    }
+
+    pub fn level_count(&self) -> usize {
+        unsafe { ffi::rocksdb_column_family_metadata_get_level_count(self.root.inner) }
+    }
+
+    /// Returns the level at `index`, or `None` if out of bounds.
+    pub fn level(&self, index: usize) -> Option<LevelMetaData> {
+        let inner = unsafe {
+            ffi::rocksdb_column_family_metadata_get_level_metadata(self.root.inner, index)
+        };
+        if inner.is_null() {
+            return None;
+        }
+        Some(LevelMetaData {
+            inner,
+            root: Some(self.root.clone()),
+        })
+    }
+
+    pub fn levels(&self) -> impl Iterator<Item = LevelMetaData> + '_ {
+        (0..self.level_count()).filter_map(|index| self.level(index))
+    }
+}
+
 /// The metadata that describes one level of a column family's LSM tree.
 ///
 /// Obtained from a [`ColumnFamilyMetaData`](crate::ColumnFamilyMetaData) query.

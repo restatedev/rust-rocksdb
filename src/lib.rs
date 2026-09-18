@@ -175,8 +175,9 @@ pub use crate::{
     iter_range::{IterateBounds, PrefixRange},
     merge_operator::MergeOperands,
     metadata::{
-        ColumnFamilyMetaDataOptions, FileType, LevelMetaData, LiveFileStorageInfoEntry,
-        LiveFilesStorageInfo, LiveFilesStorageInfoOptions, SstFileMetaData, Temperature,
+        ColumnFamilyMetaDataOptions, ColumnFamilyMetaDataRef, FileType, LevelMetaData,
+        LiveFileStorageInfoEntry, LiveFilesStorageInfo, LiveFilesStorageInfoOptions,
+        SstFileMetaData, Temperature,
     },
     perf::{PerfContext, PerfMetric, PerfStatsLevel, with_thread_local},
     rate_limiter::RateLimiter,

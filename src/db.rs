@@ -4772,6 +4772,30 @@ impl<T: ThreadMode, D: DBInner> DBCommon<T, D> {
         }
     }
 
+    /// Obtains an unfiltered snapshot with lazy level and SST file access.
+    /// Unlike [`Self::get_column_family_metadata_with_options`], empty levels
+    /// are retained and level handles are only allocated when requested.
+    pub fn get_column_family_metadata_ref(&self) -> crate::ColumnFamilyMetaDataRef<'_> {
+        unsafe {
+            crate::ColumnFamilyMetaDataRef::from_ptr(ffi::rocksdb_get_column_family_metadata(
+                self.inner.inner(),
+            ))
+        }
+    }
+
+    /// Like [`Self::get_column_family_metadata_ref`], for a specific column family.
+    pub fn get_column_family_metadata_cf_ref(
+        &self,
+        cf: &impl AsColumnFamilyRef,
+    ) -> crate::ColumnFamilyMetaDataRef<'_> {
+        unsafe {
+            crate::ColumnFamilyMetaDataRef::from_ptr(ffi::rocksdb_get_column_family_metadata_cf(
+                self.inner.inner(),
+                cf.inner(),
+            ))
+        }
+    }
+
     /// Obtains the LSM-tree meta data of the default column family of the DB
     pub fn get_column_family_metadata(&self) -> ColumnFamilyMetaData {
         unsafe {
