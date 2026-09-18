@@ -327,7 +327,7 @@ impl<T: ThreadMode> TransactionDB<T> {
             }
 
             for (cf_desc, inner) in cfs_v.iter().zip(cfhandles) {
-                cf_map.insert(cf_desc.name.clone(), inner);
+                cf_map.insert(cf_desc.name.clone().into(), inner);
             }
         }
 
@@ -1115,7 +1115,7 @@ impl TransactionDB<SingleThreaded> {
         let inner = self.create_inner_cf_handle(name.as_ref(), opts)?;
         self.cfs
             .cfs
-            .insert(name.as_ref().to_string(), ColumnFamily { inner });
+            .insert(name.as_ref().into(), ColumnFamily { inner });
         Ok(())
     }
 
@@ -1138,7 +1138,7 @@ impl TransactionDB<SingleThreaded> {
             Err(e) => {
                 // The column family is still there, so put the handle back
                 // rather than destroying the only way to reach it.
-                self.cfs.cfs.insert(name.to_owned(), cf);
+                self.cfs.cfs.insert(name.into(), cf);
                 Err(e)
             }
         }
@@ -1153,7 +1153,7 @@ impl TransactionDB<MultiThreaded> {
         let mut cfs = self.cfs.cfs.write();
         let inner = self.create_inner_cf_handle(name.as_ref(), opts)?;
         cfs.insert(
-            name.as_ref().to_string(),
+            name.as_ref().into(),
             Arc::new(UnboundColumnFamily { inner }),
         );
         Ok(())
@@ -1189,7 +1189,7 @@ impl TransactionDB<MultiThreaded> {
             Err(e) => {
                 // The column family is still there, so put the handle back
                 // rather than destroying the only way to reach it.
-                self.cfs.cfs.write().insert(name.to_owned(), cf);
+                self.cfs.cfs.write().insert(name.into(), cf);
                 Err(e)
             }
         }
