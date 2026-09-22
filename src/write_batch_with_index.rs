@@ -663,6 +663,10 @@ impl WriteBatchWithIndex {
     ///
     /// For supported range deletion, use an ordinary
     /// [`WriteBatch::delete_range`](crate::WriteBatch::delete_range).
+    #[deprecated(
+        note = "silently does nothing: RocksDB's WriteBatchWithIndex does not support \
+                DeleteRange and the C API drops the error; use WriteBatch::delete_range"
+    )]
     pub fn delete_range<K: AsRef<[u8]>>(&mut self, from: K, to: K) {
         let (start_key, end_key) = (from.as_ref(), to.as_ref());
 
@@ -686,6 +690,10 @@ impl WriteBatchWithIndex {
     /// [`delete_range`](Self::delete_range) for the underlying C API limitation.
     /// For supported range deletion, use an ordinary
     /// [`WriteBatch::delete_range_cf`](crate::WriteBatch::delete_range_cf).
+    #[deprecated(
+        note = "silently does nothing: RocksDB's WriteBatchWithIndex does not support \
+                DeleteRange and the C API drops the error; use WriteBatch::delete_range_cf"
+    )]
     pub fn delete_range_cf<K: AsRef<[u8]>>(&mut self, cf: &impl AsColumnFamilyRef, from: K, to: K) {
         let (start_key, end_key) = (from.as_ref(), to.as_ref());
 

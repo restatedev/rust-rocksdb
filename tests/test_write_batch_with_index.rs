@@ -385,3 +385,36 @@ fn test_wbwi_single_delete_cf() {
         assert_eq!(db.get_cf(&cf, b"k2").unwrap().unwrap(), b"v2");
     }
 }
+
+/// Tripwire for the deprecation on the indexed batch's range deletes: RocksDB
+/// 11.8.1 rejects `DeleteRange` on `WriteBatchWithIndex` with `NotSupported`
+/// and the C wrapper drops that status, so nothing is recorded. When a port
+/// makes these methods work, this test fails and the deprecation goes with it.
+#[test]
+#[allow(deprecated)]
+fn test_wbwi_delete_range_is_a_documented_no_op() {
+    let path = DBPath::new("_rust_rocksdb_wbwi_delete_range_no_op");
+    {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let cf_descriptor = ColumnFamilyDescriptor::new("test_cf", Options::default());
+        let db = DB::open_cf_descriptors(&opts, &path, vec![cf_descriptor]).unwrap();
+        let cf = db.cf_handle("test_cf").unwrap();
+
+        db.put(b"k1", b"v1").unwrap();
+        db.put_cf(&cf, b"k1", b"v1").unwrap();
+
+        let mut wbwi = WriteBatchWithIndex::new(0, true);
+        wbwi.delete_range(b"k0", b"k9");
+        wbwi.delete_range_cf(&cf, b"k0", b"k9");
+        assert!(
+            wbwi.is_empty(),
+            "no range deletion is recorded in the batch"
+        );
+
+        db.write_wbwi(&wbwi).unwrap();
+        assert_eq!(db.get(b"k1").unwrap().unwrap(), b"v1");
+        assert_eq!(db.get_cf(&cf, b"k1").unwrap().unwrap(), b"v1");
+    }
+}
