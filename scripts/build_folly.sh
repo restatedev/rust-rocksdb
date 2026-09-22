@@ -156,6 +156,14 @@ perl -pi -e 's/(#include <atomic>)/$1\n#include <cstring>/ unless /#include <cst
 perl -pi -e 's/: environ/: (const char**)(environ)/ unless /\(const char\*\*\)\(environ\)/' \
     "$FOLLY_DIR/folly/Subprocess.cpp"
 
+# Use libaio's verified release archive (the pagure git-snapshot URL can return
+# 404), with its matching checksum and top-level directory. Also make getdeps
+# check wget's exit status and expose its output instead of hiding the actual
+# download error behind a checksum mismatch. Revisit this patch on folly bumps;
+# git apply deliberately fails if the pinned sources no longer match.
+echo ">>> Applying getdeps download fixes..."
+git -C "$FOLLY_DIR" apply "$REPO_ROOT/scripts/folly-getdeps.patch"
+
 # getdeps pulls autoconf/automake/libtool from ftpmirror.gnu.org, which
 # intermittently serves an empty archive. getdeps checks the sha256 and dies
 # on the mismatch, but it only ever tries the one URL, so a single bad
@@ -174,6 +182,7 @@ echo ">>> Building folly + dependencies into $SCRATCH_DIR..."
 echo "    (allow 15-30 minutes on a cold cache)"
 cd "$FOLLY_DIR"
 GETDEPS_USE_WGET=1 \
+GETDEPS_WGET_ARGS="--no-verbose --server-response --timeout=60 --tries=3 ${GETDEPS_WGET_ARGS:-}" \
 CXXFLAGS=" -DHAVE_CXX11_ATOMIC " \
 python3 build/fbcode_builder/getdeps.py \
     --scratch-path "$SCRATCH_DIR" \

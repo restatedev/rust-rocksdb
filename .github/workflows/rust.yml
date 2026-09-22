@@ -464,10 +464,11 @@ jobs:
 
           # The opposite mistake: an exclude glob that eats something the crate
           # needs. `build_folly.sh` is here because the packaged README tells
-          # `coroutines` users to run it, and the .md is pulled in by
+          # `coroutines` users to run it; the script needs its getdeps patch.
+          # The .md is pulled in by
           # `include_str!` from src/db.rs.
           for pat in '^src/lib\.rs$' '^src/db\.rs$' '^LICENSE$' '^README\.md$' \
-                     '^scripts/build_folly\.sh$' \
+                     '^scripts/build_folly\.sh$' '^scripts/folly-getdeps\.patch$' \
                      '^src/db_create_column_family_with_import\.md$'; do
             if ! grep -qE "$pat" /tmp/root.txt; then
               echo "::error::nothing matches $pat, but the crate needs it"
