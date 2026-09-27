@@ -91,6 +91,29 @@ rocksdb_table_properties_get_user_collected_property_keys(
 extern ROCKSDB_LIBRARY_API void rocksdb_user_collected_properties_insert(
     rocksdb_user_collected_properties_t*, const char*, const char*);
 
+/* ============================================================================
+ * Prefix Extractors
+ * ============================================================================
+ *
+ * Upstream c.h wraps only NewFixedPrefixTransform and NewNoopTransform, and
+ * its rocksdb_slicetransform_t handle is defined privately in db/c.cc, so
+ * this overlay cannot hand out a handle for the capped-prefix transform
+ * (rocksdb::NewCappedPrefixTransform). Building one through the public
+ * rocksdb_slicetransform_create callback API would work but drops every
+ * SliceTransform virtual the callback base does not forward, notably
+ * FullLengthEnabled, which auto_prefix_mode needs to keep using the prefix
+ * bloom when the iterate bounds fall into neighbouring prefixes. Upstream's
+ * own fixed-prefix wrapper has that gap.
+ *
+ * Instead, this installs the native transform object straight into the
+ * options' prefix_extractor, replacing any extractor set before. SST files
+ * then record the native id ("rocksdb.CappedPrefix.<cap_len>"), so they are
+ * interchangeable with tables written by a C++ user of the same transform.
+ */
+
+extern ROCKSDB_LIBRARY_API void restate_options_set_capped_prefix_extractor(
+    rocksdb_options_t* options, size_t cap_len);
+
 #ifdef __cplusplus
 }
 #endif

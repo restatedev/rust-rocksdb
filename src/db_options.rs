@@ -2922,6 +2922,38 @@ impl Options {
         }
     }
 
+    /// Restate overlay: installs RocksDB's built-in capped-prefix extractor
+    /// (`rocksdb::NewCappedPrefixTransform`) as the prefix extractor.
+    ///
+    /// Every key is in the domain. Keys of at least `cap_len` bytes map to
+    /// their first `cap_len` bytes, exactly like
+    /// [`SliceTransform::create_fixed_prefix`]; shorter keys map to themselves
+    /// instead of being excluded from prefix bloom filters and hash indexes,
+    /// so they stay findable through an exact prefix seek.
+    ///
+    /// Upstream's C API has no wrapper for this transform, so the Restate
+    /// C-API overlay installs the native object directly rather than going
+    /// through a callback-based `rocksdb_slicetransform_t` handle. That keeps
+    /// every `SliceTransform` virtual, including `FullLengthEnabled`, which
+    /// RocksDB needs to keep using the prefix bloom under `auto_prefix_mode`
+    /// when the iterate bounds fall into neighbouring prefixes (for example a
+    /// [`PrefixRange`](crate::PrefixRange) whose prefix is exactly `cap_len`
+    /// bytes long). SST files record the native id
+    /// (`rocksdb.CappedPrefix.<cap_len>`), so they are interchangeable with
+    /// tables written by a C++ user of the same transform.
+    ///
+    /// This and [`set_prefix_extractor`](Self::set_prefix_extractor) write the
+    /// same underlying option, so the last call wins regardless of order, and
+    /// RocksDB releases the extractor it replaces. A [`SliceTransform`] handed
+    /// to `set_prefix_extractor` earlier is consumed by that call, so there is
+    /// nothing to free on the caller's side. If both are called, that is
+    /// almost certainly a configuration mistake: pick one per column family.
+    pub fn set_capped_prefix_extractor(&mut self, cap_len: usize) {
+        unsafe {
+            ffi::restate_options_set_capped_prefix_extractor(self.inner, cap_len);
+        }
+    }
+
     // Use this if you don't need to keep the data sorted, i.e. you'll never use
     // an iterator, only Put() and Get() API calls
     //
