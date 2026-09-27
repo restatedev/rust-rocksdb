@@ -114,6 +114,34 @@ extern ROCKSDB_LIBRARY_API void rocksdb_user_collected_properties_insert(
 extern ROCKSDB_LIBRARY_API void restate_options_set_capped_prefix_extractor(
     rocksdb_options_t* options, size_t cap_len);
 
+/* ============================================================================
+ * WriteBatchWithIndex - underlying WriteBatch access
+ * ============================================================================
+ *
+ * Returns the WriteBatch that backs a WriteBatchWithIndex
+ * (WriteBatchWithIndex::GetWriteBatch()). This is the batch that
+ * rocksdb_write_writebatch_wi() commits, so records appended to it directly
+ * are persisted along with the indexed ones.
+ *
+ * Ownership stays with the WriteBatchWithIndex: the returned pointer is valid
+ * until the wbwi is destroyed or cleared and must NOT be passed to
+ * rocksdb_writebatch_destroy().
+ *
+ * Records written through this handle bypass the wbwi's index: they are not
+ * visible to rocksdb_writebatch_wi_get_from_batch*() or to iterators created
+ * with rocksdb_writebatch_wi_create_iterator_with_base*(). Intended for
+ * record types the wbwi API cannot express (range deletions, log data, ...).
+ *
+ * The implementation casts the WriteBatch* to the opaque handle, which
+ * relies on upstream db/c.cc defining `struct rocksdb_writebatch_t` with a
+ * by-value `WriteBatch rep` as its sole member, and recovers the wbwi from
+ * `struct rocksdb_writebatch_wi_t { WriteBatchWithIndex* rep; }`. Re-check
+ * both layouts when bumping the pinned RocksDB.
+ */
+
+extern ROCKSDB_LIBRARY_API rocksdb_writebatch_t*
+restate_writebatch_wi_get_write_batch(rocksdb_writebatch_wi_t* wbwi);
+
 #ifdef __cplusplus
 }
 #endif

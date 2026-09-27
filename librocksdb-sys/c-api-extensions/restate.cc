@@ -23,6 +23,8 @@
 #include "rocksdb/status.h"
 #include "rocksdb/table_properties.h"
 #include "rocksdb/types.h"
+#include "rocksdb/utilities/write_batch_with_index.h"
+#include "rocksdb/write_batch.h"
 
 using ROCKSDB_NAMESPACE::EntryType;
 using ROCKSDB_NAMESPACE::Options;
@@ -33,6 +35,8 @@ using ROCKSDB_NAMESPACE::TableProperties;
 using ROCKSDB_NAMESPACE::TablePropertiesCollector;
 using ROCKSDB_NAMESPACE::TablePropertiesCollectorFactory;
 using ROCKSDB_NAMESPACE::UserCollectedProperties;
+using ROCKSDB_NAMESPACE::WriteBatch;
+using ROCKSDB_NAMESPACE::WriteBatchWithIndex;
 
 namespace {
 
@@ -51,6 +55,19 @@ inline Options* as_options(rocksdb_options_t* h) {
 
 inline const TableProperties* as_table_properties(const rocksdb_table_properties_t* h) {
   return reinterpret_cast<const TableProperties*>(h);
+}
+
+// rocksdb_writebatch_wi_t is `{ WriteBatchWithIndex* rep; }` (by pointer).
+inline WriteBatchWithIndex* as_wbwi(rocksdb_writebatch_wi_t* h) {
+  return *reinterpret_cast<WriteBatchWithIndex**>(h);
+}
+
+// rocksdb_writebatch_t is `{ WriteBatch rep; }` (by value, sole member), so
+// the inverse of the by-value shape above also holds: a WriteBatch* is a
+// rocksdb_writebatch_t*. Used to hand out a handle to a WriteBatch we do not
+// own without constructing (or redefining) the opaque struct.
+inline rocksdb_writebatch_t* as_writebatch_handle(WriteBatch* wb) {
+  return reinterpret_cast<rocksdb_writebatch_t*>(wb);
 }
 
 }  // namespace
@@ -302,6 +319,19 @@ void restate_options_set_capped_prefix_extractor(rocksdb_options_t* options,
   // Native object, not a rocksdb_slicetransform_t: see restate.h for why.
   as_options(options)->prefix_extractor.reset(
       ROCKSDB_NAMESPACE::NewCappedPrefixTransform(cap_len));
+}
+
+/* ============================================================================
+ * WriteBatchWithIndex - underlying WriteBatch access
+ * ============================================================================
+ */
+
+rocksdb_writebatch_t* restate_writebatch_wi_get_write_batch(
+    rocksdb_writebatch_wi_t* wbwi) {
+  // GetWriteBatch() returns &rep->write_batch: a member of the wbwi's Rep,
+  // stable for the wbwi's lifetime. Same object rocksdb_write_writebatch_wi()
+  // in db/c.cc commits.
+  return as_writebatch_handle(as_wbwi(wbwi)->GetWriteBatch());
 }
 
 }  // extern "C"
