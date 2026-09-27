@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "rocksdb/options.h"
+#include "rocksdb/slice_transform.h"
 #include "rocksdb/status.h"
 #include "rocksdb/table_properties.h"
 #include "rocksdb/types.h"
@@ -289,6 +290,18 @@ void rocksdb_user_collected_properties_insert(
   // Last write wins, so a collector that reports a key twice ends up with
   // its final value rather than silently keeping the first one.
   properties->rep->insert_or_assign(std::string(key), std::string(value));
+}
+
+/* ============================================================================
+ * Prefix Extractors
+ * ============================================================================
+ */
+
+void restate_options_set_capped_prefix_extractor(rocksdb_options_t* options,
+                                                 size_t cap_len) {
+  // Native object, not a rocksdb_slicetransform_t: see restate.h for why.
+  as_options(options)->prefix_extractor.reset(
+      ROCKSDB_NAMESPACE::NewCappedPrefixTransform(cap_len));
 }
 
 }  // extern "C"
