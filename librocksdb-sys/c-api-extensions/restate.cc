@@ -12,19 +12,26 @@
 
 #include "restate.h"
 
+#include <algorithm>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "rocksdb/env.h"
 #include "rocksdb/options.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/status.h"
 #include "rocksdb/table_properties.h"
 #include "rocksdb/types.h"
 
+using ROCKSDB_NAMESPACE::DBOptions;
 using ROCKSDB_NAMESPACE::EntryType;
+using ROCKSDB_NAMESPACE::InfoLogLevel;
+using ROCKSDB_NAMESPACE::Logger;
 using ROCKSDB_NAMESPACE::Options;
 using ROCKSDB_NAMESPACE::SequenceNumber;
 using ROCKSDB_NAMESPACE::Slice;
@@ -52,6 +59,79 @@ inline Options* as_options(rocksdb_options_t* h) {
 inline const TableProperties* as_table_properties(const rocksdb_table_properties_t* h) {
   return reinterpret_cast<const TableProperties*>(h);
 }
+
+// `struct rocksdb_logger_t { std::shared_ptr<Logger> rep; }` in db/c.cc.
+// tests/test_tee_info_logger.rs exercises it through set_tee_info_logger.
+inline const std::shared_ptr<Logger>& as_logger(const rocksdb_logger_t* h) {
+  return *reinterpret_cast<const std::shared_ptr<Logger>*>(h);
+}
+
+void save_error(char** errptr, const std::string& message) {
+  std::free(*errptr);
+  *errptr = strdup(message.c_str());
+}
+
+// Forwards every message to the native file logger and to a second logger,
+// each filtered by its own level. RocksDB checks the level it reports before
+// formatting, so it reports the more verbose of the two.
+class TeeLogger final : public Logger {
+ public:
+  TeeLogger(std::shared_ptr<Logger> file, std::shared_ptr<Logger> other)
+      : Logger(std::min(file->GetInfoLogLevel(), other->GetInfoLogLevel())),
+        file_(std::move(file)),
+        other_(std::move(other)) {}
+
+  ~TeeLogger() override { Close().PermitUncheckedError(); }
+
+  void LogHeader(const char* format, va_list ap) override {
+    va_list copy;
+    va_copy(copy, ap);
+    // The file logger keeps headers to repeat them at the top of every rotated
+    // file.
+    file_->LogHeader(format, copy);
+    va_end(copy);
+    // Logger's default LogHeader reports headers as INFO_LEVEL. Forward them the
+    // way RocksDB logs headers to any logger, so a callback logger sees
+    // HEADER_LEVEL and other loggers handle them as they would on their own.
+    other_->Logv(InfoLogLevel::HEADER_LEVEL, format, ap);
+  }
+
+  void Logv(const char* format, va_list ap) override {
+    Logv(InfoLogLevel::INFO_LEVEL, format, ap);
+  }
+
+  void Logv(const InfoLogLevel level, const char* format,
+            va_list ap) override {
+    if (level >= file_->GetInfoLogLevel()) {
+      va_list copy;
+      va_copy(copy, ap);
+      file_->Logv(level, format, copy);
+      va_end(copy);
+    }
+    // The C callback logger forwards whatever it receives, so its level must be
+    // applied here.
+    if (level >= other_->GetInfoLogLevel()) {
+      other_->Logv(level, format, ap);
+    }
+  }
+
+  size_t GetLogFileSize() const override { return file_->GetLogFileSize(); }
+
+  void Flush() override {
+    file_->Flush();
+    other_->Flush();
+  }
+
+ protected:
+  // Only the file logger belongs to the tee. The other logger is the caller's
+  // and may be shared, for example with a database that still uses it; RocksDB
+  // likewise never closes an info_log it was given.
+  Status CloseImpl() override { return file_->Close(); }
+
+ private:
+  std::shared_ptr<Logger> file_;
+  std::shared_ptr<Logger> other_;
+};
 
 }  // namespace
 
@@ -302,6 +382,43 @@ void restate_options_set_capped_prefix_extractor(rocksdb_options_t* options,
   // Native object, not a rocksdb_slicetransform_t: see restate.h for why.
   as_options(options)->prefix_extractor.reset(
       ROCKSDB_NAMESPACE::NewCappedPrefixTransform(cap_len));
+}
+
+/* ============================================================================
+ * Tee Info Logger
+ * ============================================================================
+ */
+
+void restate_options_set_tee_info_log(rocksdb_options_t* options,
+                                      const char* dbname,
+                                      const rocksdb_logger_t* logger,
+                                      char** errptr) {
+  try {
+    // rocksdb_options_get_info_log wraps an unset info_log as an empty rep.
+    if (logger == nullptr || !as_logger(logger)) {
+      save_error(errptr, "Invalid argument: logger is not set");
+      return;
+    }
+    Options* opts = as_options(options);
+    // CreateLoggerFromOptions returns an already configured info_log as is.
+    DBOptions file_options(*opts);
+    file_options.info_log.reset();
+    std::shared_ptr<Logger> file;
+    Status status =
+        ROCKSDB_NAMESPACE::CreateLoggerFromOptions(dbname, file_options, &file);
+    if (!status.ok()) {
+      save_error(errptr, status.ToString());
+      return;
+    }
+    opts->info_log = std::make_shared<TeeLogger>(std::move(file), as_logger(logger));
+    // Some producers check DBOptions::info_log_level instead of the logger's
+    // level before formatting a message.
+    opts->info_log_level = opts->info_log->GetInfoLogLevel();
+  } catch (const std::exception& error) {
+    save_error(errptr, error.what());
+  } catch (...) {
+    save_error(errptr, "unknown C++ exception in set_tee_info_log");
+  }
 }
 
 }  // extern "C"

@@ -114,6 +114,32 @@ extern ROCKSDB_LIBRARY_API void rocksdb_user_collected_properties_insert(
 extern ROCKSDB_LIBRARY_API void restate_options_set_capped_prefix_extractor(
     rocksdb_options_t* options, size_t cap_len);
 
+/* ============================================================================
+ * Tee Info Logger
+ * ============================================================================
+ *
+ * Installing a logger through rocksdb_options_set_info_log replaces the
+ * native file logger, so a database logs either to its LOG files or to the
+ * custom logger, never both. This creates the native file logger from
+ * `options` and `dbname` exactly as DB::Open would (same location, rotation,
+ * retention and level) and installs a logger that writes every message to it
+ * and to `logger`, each filtered by its own level. `logger` is borrowed: the
+ * caller still owns and destroys it, and the tee never closes it, so it may be
+ * shared with other options or databases.
+ *
+ * Like the accessors above, the implementation recovers the wrapped C++
+ * objects of `options` and `logger` by casting the handles, which relies on
+ * upstream db/c.cc defining both structs with `rep` as their first member.
+ *
+ * On failure `*errptr` is set and `options` is left unchanged. A `logger`
+ * that wraps no logger, such as one returned by rocksdb_options_get_info_log
+ * for options without an info_log, is rejected.
+ */
+
+extern ROCKSDB_LIBRARY_API void restate_options_set_tee_info_log(
+    rocksdb_options_t* options, const char* dbname,
+    const rocksdb_logger_t* logger, char** errptr);
+
 #ifdef __cplusplus
 }
 #endif

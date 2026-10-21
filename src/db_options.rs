@@ -5317,6 +5317,64 @@ impl Options {
         }
     }
 
+    /// Sends RocksDB's internal logs both to its native `LOG` files and to `logger`.
+    ///
+    /// [`set_info_logger`](Self::set_info_logger) replaces the native file logger, so a
+    /// database logs either to its `LOG` files or to the custom logger. This keeps both:
+    /// the files are created exactly as [`DB::open`](crate::DB::open) would create them
+    /// for `path`, and every message is also passed to `logger`.
+    ///
+    /// The files take their location, rotation, retention and level from these options,
+    /// so set [`set_log_level`](Self::set_log_level),
+    /// [`set_db_log_dir`](Self::set_db_log_dir),
+    /// [`set_max_log_file_size`](Self::set_max_log_file_size) and
+    /// [`set_keep_log_file_num`](Self::set_keep_log_file_num) first. `logger` keeps its
+    /// own level, and neither destination restricts the other. The options' log level
+    /// becomes the more verbose of the two levels. A
+    /// [callback logger](InfoLogger::new_callback_logger) receives startup headers as
+    /// [`LogLevel::Header`] at any level; other loggers handle headers as they would when
+    /// installed on their own. `logger` is never closed by the tee, so it may be one
+    /// that other options or databases also use.
+    ///
+    /// The file logger is created immediately, which rotates an existing `LOG` file as
+    /// opening the database would. Call this once, just before opening the database at
+    /// `path`. It replaces any previously configured info logger. It fails if `logger` wraps
+    /// no logger, as [`get_info_logger`](Self::get_info_logger) returns for options that
+    /// have none.
+    ///
+    /// ```no_run
+    /// use rust_rocksdb::{DB, InfoLogger, LogLevel, Options};
+    ///
+    /// let path = "_path_for_tee_info_logger";
+    /// let mut opts = Options::default();
+    /// opts.create_if_missing(true);
+    /// opts.set_log_level(LogLevel::Info);
+    /// opts.set_tee_info_logger(
+    ///     path,
+    ///     InfoLogger::new_callback_logger(LogLevel::Warn, |level, msg| {
+    ///         eprintln!("{level:?}: {msg}");
+    ///     }),
+    /// )
+    /// .unwrap();
+    /// let db = DB::open(&opts, path).unwrap();
+    /// ```
+    pub fn set_tee_info_logger<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        mut logger: InfoLogger,
+    ) -> Result<(), Error> {
+        let path = to_cpath(path)?;
+        unsafe {
+            ffi_try!(ffi::restate_options_set_tee_info_log(
+                self.inner,
+                path.as_ptr(),
+                logger.inner,
+            ));
+        }
+        self.outlive.logger_callback = logger.callback.take();
+        Ok(())
+    }
+
     /// Returns a reference to the currently configured logger.
     pub fn get_info_logger(&self) -> InfoLogger {
         let raw = unsafe { ffi::rocksdb_options_get_info_log(self.inner) };
