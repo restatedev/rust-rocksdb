@@ -394,6 +394,11 @@ void restate_options_set_tee_info_log(rocksdb_options_t* options,
                                       const rocksdb_logger_t* logger,
                                       char** errptr) {
   try {
+    // rocksdb_options_get_info_log wraps an unset info_log as an empty rep.
+    if (logger == nullptr || !as_logger(logger)) {
+      save_error(errptr, "Invalid argument: logger is not set");
+      return;
+    }
     Options* opts = as_options(options);
     // CreateLoggerFromOptions returns an already configured info_log as is.
     DBOptions file_options(*opts);

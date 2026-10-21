@@ -252,3 +252,18 @@ fn tee_info_logger_reports_errors_and_leaves_options_usable() {
     // The native file logger is still in place.
     assert!(log_file(&path).exists());
 }
+
+#[test]
+fn tee_info_logger_rejects_an_unset_logger() {
+    // Options without an info logger hand out a logger that wraps nothing.
+    let unset = Options::default().get_info_logger();
+    let path = DBPath::new("tee_info_logger_unset");
+    let mut opts = Options::default();
+    assert!(opts.set_tee_info_logger(&path, unset).is_err());
+
+    opts.create_if_missing(true);
+    let db = DB::open(&opts, &path).unwrap();
+    db.put(b"key", b"value").unwrap();
+    drop(db);
+    assert!(log_file(&path).exists());
+}

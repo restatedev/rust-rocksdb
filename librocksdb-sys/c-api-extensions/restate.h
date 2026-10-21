@@ -131,7 +131,9 @@ extern ROCKSDB_LIBRARY_API void restate_options_set_capped_prefix_extractor(
  * objects of `options` and `logger` by casting the handles, which relies on
  * upstream db/c.cc defining both structs with `rep` as their first member.
  *
- * On failure `*errptr` is set and `options` is left unchanged.
+ * On failure `*errptr` is set and `options` is left unchanged. A `logger`
+ * that wraps no logger, such as one returned by rocksdb_options_get_info_log
+ * for options without an info_log, is rejected.
  */
 
 extern ROCKSDB_LIBRARY_API void restate_options_set_tee_info_log(

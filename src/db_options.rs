@@ -5338,7 +5338,9 @@ impl Options {
     ///
     /// The file logger is created immediately, which rotates an existing `LOG` file as
     /// opening the database would. Call this once, just before opening the database at
-    /// `path`. It replaces any previously configured info logger.
+    /// `path`. It replaces any previously configured info logger. It fails if `logger` wraps
+    /// no logger, as [`get_info_logger`](Self::get_info_logger) returns for options that
+    /// have none.
     ///
     /// ```no_run
     /// use rust_rocksdb::{DB, InfoLogger, LogLevel, Options};
